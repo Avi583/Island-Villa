@@ -70,17 +70,6 @@ build.sh           Rebuilds docs/raytracer.wasm from src/
 To-Do-List.txt     Known issues and untested items
 
 
-PUTTING IT ON GITHUB
----------------------------------------------------------------------
-Upload the whole folder to a repository, keeping the folder structure.
-The site itself is everything in docs/; the .wasm file is already built,
-so nothing needs compiling to host it. Point GitHub Pages at the docs/
-folder of your main branch.
-
-docs/raytracer.wasm is a binary file. Upload it as a file (drag and drop
-in GitHub's "Upload files" page); it cannot be copy-pasted as text.
-
-
 REBUILDING AFTER CHANGING THE C++
 ---------------------------------------------------------------------
 Requires clang 15 or newer with the wasm32 target and wasm-ld (lld).
