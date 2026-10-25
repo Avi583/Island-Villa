@@ -344,7 +344,7 @@ function screenshot() {
   canvas.toBlob((blob) => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `aurora-house-${Date.now()}.png`;
+    a.download = `island-villa-${Date.now()}.png`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   });

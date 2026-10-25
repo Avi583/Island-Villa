@@ -1,4 +1,4 @@
-AURORA HOUSE
+ISLAND VILLA
 Real-time ray tracing in hand-written C++, compiled to WebAssembly
 =====================================================================
 

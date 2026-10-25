@@ -1,4 +1,4 @@
-AURORA HOUSE - C++ RAY TRACER DEMO
+ISLAND VILLA - C++ RAY TRACER DEMO
 TO-DO LIST (unfixed and untested items)
 Last updated: Sunday, October 25, 2026 (end of build turn 6 - final delivery)
 =====================================================================
@@ -109,4 +109,4 @@ STATUS KEY
 [x] Checkbox row layout in the settings panel fixed.
 [x] Slider values (sun elevation, sun direction, exposure) now shown live.
 [x] README.txt written.
-[x] Repository packaged as aurora-house.zip.
+[x] Repository packaged as island-villa.zip.
