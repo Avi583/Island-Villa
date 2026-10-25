@@ -1,0 +1,112 @@
+AURORA HOUSE - C++ RAY TRACER DEMO
+TO-DO LIST (unfixed and untested items)
+Last updated: Sunday, October 25, 2026 (end of build turn 6 - final delivery)
+=====================================================================
+
+STATUS KEY
+  [ ] = open, not started
+  [~] = partly done / needs verification
+  [x] = done (kept here for traceability)
+
+
+1. NOT YET TESTED
+---------------------------------------------------------------------
+[ ] Performance on a real multi-core desktop.
+    Only tested in a 2-core sandbox (about 5-12 fps at ~230x130 internal
+    resolution). On 8+ thread machines it should be much higher, but the
+    actual fps, the resolution auto-scaling behaviour and the 36 ms frame
+    target in "Balanced" mode have not been measured on real hardware.
+
+[ ] Browsers other than Chromium.
+    Not tested in Firefox, Safari (macOS / iOS) or Edge. Things to check:
+      - WebAssembly SIMD support (build uses -msimd128; Safari needs 16.4+)
+      - canvas ctx.filter used by the bloom pass (older Safari ignores it,
+        so bloom would silently not appear; the page should still work)
+      - pointer lock behaviour for mouse look
+
+[ ] Mobile / touch controls.
+    Left-half drag = move, right-half drag = look. Written but never run on
+    a phone or tablet. Also check memory use (one WASM instance per core).
+
+[ ] Live GitHub Pages deployment.
+    Local static serving was verified (all files return 200 and the .wasm is
+    served as application/wasm), but the site has not been pushed to GitHub
+    or opened from a github.io URL yet.
+
+[ ] Google Fonts loading.
+    Blocked inside the build sandbox, so the fonts (Space Grotesk, JetBrains
+    Mono) were never seen loading. The page falls back to system fonts if
+    they fail, so this is cosmetic only.
+
+[ ] Long-running stability.
+    Not soak-tested (e.g. 10+ minutes of walking, repeated window resizes,
+    switching quality modes many times) for memory growth or stalls.
+
+[ ] Screenshot and Fullscreen buttons.
+    Wired up but never clicked in a real browser session.
+
+[ ] Collision edge cases.
+    Walking onto / off the boardwalk dock, sliding along the glass walls and
+    around pillars, trees and lamps has only been reasoned through in code,
+    not walked in the browser.
+
+
+2. KNOWN ISSUES - NOT YET FIXED
+---------------------------------------------------------------------
+[ ] Image is very soft/blocky while moving on slow CPUs.
+    Auto-resolution can drop to ~18% scale. Ideas: raise the minimum scale,
+    turn global illumination fully off while moving, or add a cheap
+    edge-aware upscale/sharpen pass when presenting the frame.
+
+[ ] Daytime glass is slightly grainy until the camera stops.
+    Comes from soft-shadow and bounce-light sampling on the interior seen
+    through the glass. Converges when standing still (progressive
+    accumulation). A temporal reprojection pass would fix this while moving
+    but is a large change.
+
+[ ] Chrome pillars sparkle slightly at night.
+    Mirror reflections of tiny bright emitters. Minor; could clamp specular
+    contribution or slightly increase chrome roughness.
+
+[ ] Bloom is uniform, not thresholded.
+    The glow pass blurs the whole frame (canvas filter), so bright sky also
+    gets a soft haze. A proper bright-pass bloom would need to be computed in
+    C++ or a second canvas.
+
+[ ] Cars pass through the player and each other is never checked.
+    Cars follow fixed circular lanes at constant speed, so same-lane cars
+    never collide, but the player is not blocked by cars.
+
+[ ] Pool water has no visible rim/coping.
+    The water volume runs edge to edge as the "glass walls". A thin rim or
+    a separate glass pane would read more realistically up close.
+
+[ ] Interior is simple.
+    Ground floor has a kitchen island, sofa, table and light strips; upper
+    floor is suggested only by the lit ribbon window.
+
+
+3. OPTIONAL - SKIPPED AT YOUR REQUEST
+---------------------------------------------------------------------
+[ ] GitHub Actions workflow to rebuild raytracer.wasm automatically on
+    every push. Not included: the .wasm is prebuilt, so rebuild manually
+    with ./build.sh after changing the C++.
+[ ] Step-by-step GitHub Pages setup guide. Not included; README.txt has a
+    short note on which folder to serve.
+
+
+4. DONE AND VERIFIED (for reference)
+---------------------------------------------------------------------
+[x] C++ ray tracer compiles to a 52 KB freestanding WebAssembly module
+    (clang + wasm-ld, no Emscripten, no libc).
+[x] Renders correctly through the multi-instance, interleaved-row path
+    used by the browser workers (checked from 6 camera views).
+[x] Sky gradient fixed (no lilac cast); stars only after sunset.
+[x] Night/dusk speckle (fireflies) removed.
+[x] Upper-floor ribbon window shows mullions and individually lit rooms.
+[x] Page loads in headless Chromium with no script errors; walking
+    (W/A) and the perimeter tour (T) run without errors.
+[x] Checkbox row layout in the settings panel fixed.
+[x] Slider values (sun elevation, sun direction, exposure) now shown live.
+[x] README.txt written.
+[x] Repository packaged as aurora-house.zip.

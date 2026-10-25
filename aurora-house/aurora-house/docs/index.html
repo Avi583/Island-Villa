@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Aurora House — Real-time C++ Ray Tracing</title>
+<meta name="description" content="A futuristic lakeside house rendered in real time by a hand-written C++ ray tracer compiled to WebAssembly and run on every CPU core.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #05070c;
+    --glass: rgba(10, 16, 26, 0.62);
+    --line: rgba(120, 220, 255, 0.18);
+    --text: #e6f1ff;
+    --muted: #8aa0b8;
+    --cyan: #5ff2ff;
+    --magenta: #ff5fd2;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
+    font: 14px/1.4 "Space Grotesk", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  canvas#view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; touch-action: none; }
+
+  .panel { position: fixed; background: var(--glass); border: 1px solid var(--line); border-radius: 14px;
+    backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3); }
+
+  #brand { top: 16px; left: 16px; padding: 14px 18px; max-width: min(380px, calc(100vw - 32px)); }
+  #brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.04em; font-weight: 700; }
+  #brand h1 span { background: linear-gradient(90deg, var(--cyan), var(--magenta)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #brand p { margin: 4px 0 10px; color: var(--muted); font-size: 12.5px; }
+  .stats { display: grid; grid-template-columns: repeat(3, auto); gap: 6px 18px; font: 12px "JetBrains Mono", monospace; }
+  .stats b { display: block; color: var(--cyan); font-size: 15px; font-weight: 600; }
+  .stats span { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+  #controls { top: 16px; right: 16px; width: 270px; padding: 14px 16px 16px; max-height: calc(100vh - 32px); overflow: auto; transition: transform .3s ease; }
+  #controls h2 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+  #panel-toggle { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 16px; padding: 0 4px; }
+  body.panel-collapsed #controls { transform: translateX(calc(100% - 44px)); }
+  .row { margin: 10px 0; }
+  .row label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input[type=range] { width: 100%; accent-color: var(--cyan); }
+  select { width: 100%; background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; }
+  select option { background: #0b1220; }
+  .chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  button.b { background: rgba(255,255,255,0.05); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 6px; font: 500 12px "Space Grotesk", sans-serif; cursor: pointer; transition: background .15s, border-color .15s; }
+  button.b:hover { background: rgba(95, 242, 255, 0.12); }
+  button.b.on { border-color: var(--cyan); background: rgba(95, 242, 255, 0.18); color: #fff; }
+  .toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; font-size: 12px; color: var(--muted); }
+  .row.toggles label { display: flex; justify-content: flex-start; gap: 6px; align-items: center; cursor: pointer; margin: 0; color: var(--muted); }
+  input[type=checkbox] { accent-color: var(--cyan); }
+  kbd { font: 11px "JetBrains Mono", monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--text); }
+
+  #hint { left: 50%; bottom: 16px; transform: translateX(-50%); padding: 8px 14px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  #hint kbd { margin: 0 2px; }
+
+  #start { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; transition: opacity .4s; }
+  #start div { padding: 14px 22px; font-weight: 500; letter-spacing: 0.06em; border-color: rgba(95,242,255,.45); }
+  #start.gone { opacity: 0; }
+
+  #loading { position: fixed; inset: 0; background: radial-gradient(ellipse at 50% 60%, #0d1a2b, #03050a 70%);
+    display: grid; place-items: center; z-index: 10; transition: opacity .6s; }
+  #loading.gone { opacity: 0; pointer-events: none; }
+  #loading .box { width: min(420px, 86vw); text-align: center; }
+  #loading h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: 0.06em; }
+  #loading h1 span { background: linear-gradient(90deg, var(--cyan), var(--magenta)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #loading p { color: var(--muted); margin: 0 0 20px; }
+  .bar { height: 3px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+  #load-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--cyan), var(--magenta)); transition: width .3s; }
+  #load-text { margin-top: 12px; font: 12px "JetBrains Mono", monospace; color: var(--muted); }
+  #loading.error #load-text { color: #ff8a8a; }
+
+  body.hide-ui .panel { display: none; }
+  a { color: var(--cyan); }
+
+  @media (max-width: 760px) {
+    #brand { padding: 10px 12px; }
+    #brand p { display: none; }
+    #controls { top: auto; bottom: 12px; right: 12px; width: min(270px, calc(100vw - 24px)); max-height: 46vh; }
+    #hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<section id="brand" class="panel">
+  <h1>AURORA <span>HOUSE</span></h1>
+  <p>Every pixel is traced by hand-written C++ — SAH BVH, Fresnel water, glass and soft shadows — compiled to WebAssembly and run across <span id="threads">?</span> CPU threads. No WebGL.</p>
+  <div class="stats">
+    <div><b id="fps">–</b><span>fps</span></div>
+    <div><b id="resout">–</b><span>internal res</span></div>
+    <div><b id="mpix">–</b><span>Mpix / s</span></div>
+    <div><b id="ms">–</b><span>trace ms</span></div>
+    <div><b id="spp">–</b><span>accumulation</span></div>
+  </div>
+</section>
+
+<aside id="controls" class="panel">
+  <h2>Render settings <button id="panel-toggle" title="Collapse">⇥</button></h2>
+
+  <div class="row">
+    <label>Time of day</label>
+    <div class="chips">
+      <button class="b on" data-preset="golden">Golden</button>
+      <button class="b" data-preset="noon">Noon</button>
+      <button class="b" data-preset="blue">Dusk</button>
+      <button class="b" data-preset="night">Night</button>
+    </div>
+  </div>
+  <div class="row"><label>Sun elevation <span id="sun-val"></span></label><input id="sun" type="range" min="-16" max="65" step="0.5"></div>
+  <div class="row"><label>Sun direction <span id="az-val"></span></label><input id="az" type="range" min="0" max="360" step="1"></div>
+  <div class="row"><label>Exposure <span id="exp-val"></span></label><input id="exposure" type="range" min="0.3" max="2.5" step="0.05" value="1"></div>
+
+  <div class="row">
+    <label>Quality</label>
+    <select id="quality">
+      <option value="performance">Performance — direct light only</option>
+      <option value="balanced" selected>Balanced — adds global illumination</option>
+      <option value="photo">Photo — full res, converging</option>
+    </select>
+  </div>
+  <div class="row"><label>Render scale <span><input id="autores" type="checkbox" checked> auto</span></label><input id="res" type="range" min="18" max="100" step="1" value="45"></div>
+
+  <div class="row toggles">
+    <label><input id="shadows" type="checkbox" checked> Shadows</label>
+    <label><input id="bloom" type="checkbox" checked> Bloom</label>
+    <label><input id="pause" type="checkbox"> Freeze time</label>
+  </div>
+
+  <div class="row btns">
+    <button class="b" id="tour">Perimeter tour <kbd>T</kbd></button>
+    <button class="b" id="drone">Drone view <kbd>V</kbd></button>
+    <button class="b" id="photo">Photo mode <kbd>P</kbd></button>
+    <button class="b" id="shot">Screenshot</button>
+    <button class="b" id="fullscreen">Fullscreen <kbd>F</kbd></button>
+  </div>
+</aside>
+
+<div id="hint" class="panel">
+  Click to look <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk · <kbd>Shift</kbd> run · <kbd>T</kbd> tour · <kbd>V</kbd> drone · <kbd>P</kbd> photo · <kbd>Space</kbd> freeze · <kbd>H</kbd> hide UI
+</div>
+
+<div id="start"><div class="panel">Click to explore · stand still to let the image converge</div></div>
+
+<div id="loading">
+  <div class="box">
+    <h1>AURORA <span>HOUSE</span></h1>
+    <p>Real-time ray tracing in C++ → WebAssembly</p>
+    <div class="bar"><div id="load-bar"></div></div>
+    <div id="load-text">Starting…</div>
+  </div>
+</div>
+
+<script src="main.js"></script>
+</body>
+</html>
