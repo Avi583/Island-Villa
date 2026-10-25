@@ -19,7 +19,7 @@ const state = {
   drone: false, tour: false, tourAngle: Math.atan2(START.z, START.x),
   time: 0, paused: false,
   sunElev: 7 * DEG, sunAz: 2.3, exposure: 1.0,
-  quality: 'balanced', bloom: true, shadows: true,
+  quality: 'balanced', bloom: true, denoise: true, shadows: true,
   scale: 0.45, autoRes: true,
 };
 
@@ -76,7 +76,7 @@ function onWorkerMessage(e) {
 }
 
 // ── frame pipeline ──────────────────────────────────────────────────────────
-let img = null, img32 = null, rw = 0, rh = 0;
+let img = null, img32 = null, dimg = null, dimg32 = null, rw = 0, rh = 0;
 let busy = false, pending = 0, frameNo = 0, dispatchT = 0, workerMs = 0;
 let accumN = 0, lastKey = '';
 let fps = 0, lastPresent = performance.now();
@@ -97,6 +97,8 @@ function dispatch() {
     low.width = w; low.height = h;
     img = lctx.createImageData(w, h);
     img32 = new Uint32Array(img.data.buffer);
+    dimg = lctx.createImageData(w, h);
+    dimg32 = new Uint32Array(dimg.data.buffer);
     accumN = 0;
   }
   const cam = [state.x, state.eye, state.z, state.yaw, state.pitch];
@@ -110,7 +112,7 @@ function dispatch() {
   // Progressive refinement: a true running average while the scene is frozen,
   // a short temporal window (EMA) while cars and waves are moving.
   let blend = 1 / accumN;
-  if (!timeFrozen) blend = Math.max(blend, 0.3);
+  if (!timeFrozen) blend = Math.max(blend, 0.1);
   const q = QUALITY[state.quality];
   const gi = still ? q.giStill : q.giMove;
 
@@ -139,8 +141,53 @@ function receiveRows(m) {
   if (--pending === 0) present();
 }
 
+// Edge-aware (bilateral) denoise on the 8-bit display image. Each pixel becomes a weighted
+// average of its 5×5 neighbourhood; the weight falls off with spatial distance and, more
+// steeply, with colour difference, so noise averages out while real edges stay sharp.
+// Only the display copy is filtered — the float accumulator in WASM is untouched.
+const DEN_BASE_SIGMA = 28;                                // colour tolerance in 8-bit units
+const DEN_SPATIAL = new Float32Array(25);
+for (let dy = -2; dy <= 2; dy++)
+  for (let dx = -2; dx <= 2; dx++) DEN_SPATIAL[(dy + 2) * 5 + dx + 2] = Math.exp(-(dx * dx + dy * dy) / (2 * 1.5 * 1.5));
+const denLut = new Float32Array(2048);                    // exp(-d²/2σ²), indexed by d² >> 5
+let denLutSigma = -1;
+
+function denoise(src, dst, w, h, sigma) {
+  if (sigma !== denLutSigma) {
+    denLutSigma = sigma;
+    for (let i = 0; i < denLut.length; i++) denLut[i] = Math.exp(-(i * 32) / (2 * sigma * sigma));
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const c = src[y * w + x];
+      const cr = c & 255, cg = (c >> 8) & 255, cb = (c >> 16) & 255;
+      let sr = 0, sg = 0, sb = 0, sw = 0, k = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        const yy = Math.min(h - 1, Math.max(0, y + dy)) * w;
+        for (let dx = -2; dx <= 2; dx++, k++) {
+          const p = src[yy + Math.min(w - 1, Math.max(0, x + dx))];
+          const r = p & 255, g = (p >> 8) & 255, b = (p >> 16) & 255;
+          const dr = r - cr, dg = g - cg, db = b - cb;
+          const wt = DEN_SPATIAL[k] * denLut[Math.min(2047, (dr * dr + dg * dg + db * db) >> 5)];
+          sr += r * wt; sg += g * wt; sb += b * wt; sw += wt;
+        }
+      }
+      const inv = 1 / sw;                                 // centre tap has weight 1, so sw ≥ 1
+      dst[y * w + x] = 0xFF000000 | (((sb * inv + 0.5) | 0) << 16) | (((sg * inv + 0.5) | 0) << 8) | ((sr * inv + 0.5) | 0);
+    }
+  }
+}
+
 function present() {
-  lctx.putImageData(img, 0, 0);
+  // Strength fades as a frozen/still image converges; while time runs the temporal window stays short, so keep it full.
+  const frozen = state.paused || state.quality === 'photo';
+  const strength = frozen ? 1 / Math.sqrt(Math.max(1, accumN)) : 1;
+  if (state.denoise && strength > 0.15) {
+    denoise(img32, dimg32, rw, rh, DEN_BASE_SIGMA * strength);
+    lctx.putImageData(dimg, 0, 0);
+  } else {
+    lctx.putImageData(img, 0, 0);
+  }
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.globalCompositeOperation = 'source-over';
@@ -326,6 +373,7 @@ function wireUI() {
   $('quality').onchange = (e) => setQuality(e.target.value);
   $('shadows').onchange = (e) => { state.shadows = e.target.checked; };
   $('bloom').onchange = (e) => { state.bloom = e.target.checked; };
+  $('denoise').onchange = (e) => { state.denoise = e.target.checked; };
   $('pause').onchange = (e) => { state.paused = e.target.checked; };
   $('tour').onclick = toggleTour;
   $('drone').onclick = toggleDrone;
