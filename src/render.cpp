@@ -195,9 +195,19 @@ static V3 texAlbedo(const Material& m, V3 p, V3 n) {
       float f = fbm(p.x * 0.35f, p.z * 0.35f);
       return m.albedo * (0.7f + 0.4f * f) * (0.92f + 0.08f * fsin(p.x * 2.6f + f * 6.f));
     }
-    case T_FOLIAGE: {
-      float f = vnoise(p.x * 3.f + p.y * 2.f, p.z * 3.f - p.y * 1.7f);
-      return m.albedo * (0.55f + 0.9f * f);
+    case T_FOLIAGE: {                                               // clumpy leaves, dark gaps, sun-bleached tips
+      float big = vnoise(p.x * 2.f + p.y * 1.5f, p.z * 2.f - p.y * 1.3f);
+      float leaf = vnoise(p.x * 11.f + p.y * 7.f, p.z * 11.f - p.y * 9.f);
+      float fine = vnoise(p.x * 27.f - p.z * 5.f, p.y * 27.f + p.x * 5.f);
+      float f = 0.5f * big + 0.35f * leaf + 0.15f * fine;
+      V3 c = m.albedo * (0.35f + 1.15f * f * f * 1.6f);
+      return mix(c, c * V3(1.5f, 1.35f, 0.8f), sat(n.y * 0.5f + 0.1f) * f);
+    }
+    case T_BARK: {                                                  // vertical furrows with irregular breaks
+      float a = fatan2(p.z, p.x);
+      float ridge = vnoise(a * 7.f + p.x * 0.5f, p.y * 1.4f + p.z * 0.5f);
+      float crack = vnoise(a * 19.f, p.y * 3.f);
+      return m.albedo * (0.5f + 0.9f * ridge) * (0.75f + 0.5f * crack);
     }
     default: return m.albedo;
   }

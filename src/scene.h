@@ -16,7 +16,7 @@ enum MatKind : i32 {
   K_EMIT       // neon, lamps, headlights
 };
 
-enum TexId : i32 { T_NONE, T_ISLAND, T_WOOD, T_CONCRETE, T_POOL, T_SAND, T_FOLIAGE };
+enum TexId : i32 { T_NONE, T_ISLAND, T_WOOD, T_CONCRETE, T_POOL, T_SAND, T_FOLIAGE, T_BARK };
 
 struct Material {
   i32 kind, tex;
@@ -30,6 +30,7 @@ enum MatId : i32 {
   M_FABRIC, M_MARBLE, M_RUBBER, M_CARGLASS, M_HEADLIGHT, M_TAILLIGHT, M_LAMP,
   M_PAINT0, M_PAINT1, M_PAINT2, M_PAINT3,
   M_CARPAINT,   // placeholder in the car template, swapped for each car's own paint
+  M_FOLIAGE2,   // lighter, yellower leaf tone for canopy variation
   M_COUNT
 };
 

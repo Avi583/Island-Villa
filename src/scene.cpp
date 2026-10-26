@@ -14,7 +14,7 @@ unsigned char g_transmissive[M_COUNT];
 Light         g_lights[MAX_LIGHTS];
 i32           g_lightCount;
 
-static BVH<512> g_bvh;
+static BVH<1024> g_bvh;
 static i32      g_staticLights;
 
 // ── cars: one shared local-space template, instanced with a rotation ─────────
@@ -65,7 +65,8 @@ static void buildMaterials() {
   defMat(M_NEON_MAGENTA, K_EMIT, V3(0.f), 0.f, 0.f, T_NONE, V3(5.0f, 0.5f, 3.4f));
   defMat(M_PANEL,        K_EMIT, V3(0.f), 0.f, 0.f, T_NONE, V3(3.2f, 2.6f, 1.9f));
   defMat(M_FOLIAGE,  K_DIFFUSE, V3(0.10f, 0.24f, 0.06f),      0.04f, 0.f, T_FOLIAGE);
-  defMat(M_TRUNK,    K_DIFFUSE, V3(0.22f, 0.16f, 0.11f));
+  defMat(M_FOLIAGE2, K_DIFFUSE, V3(0.20f, 0.30f, 0.07f),      0.04f, 0.f, T_FOLIAGE);
+  defMat(M_TRUNK,    K_DIFFUSE, V3(0.26f, 0.19f, 0.13f),      0.04f, 0.f, T_BARK);
   defMat(M_FABRIC,   K_DIFFUSE, V3(0.26f, 0.27f, 0.30f));
   defMat(M_MARBLE,   K_COAT,    V3(0.86f, 0.85f, 0.83f),      0.05f);
   defMat(M_RUBBER,   K_DIFFUSE, V3(0.025f));
@@ -135,17 +136,69 @@ static void buildHouse() {
   B(-3.8f, 0.55f, 8.6f, 3.8f, 0.8f, 12.2f, M_POOL);
 }
 
+// ── trees: leaning tapered trunk, root flare, forked limbs, lumpy two-tone crown ──
+static float treeRand(u32& s) {                                 // xorshift → [0,1)
+  s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+  return (float)(s & 0xFFFFFFu) * (1.f / 16777216.f);
+}
+static void buildTree(float x, float z, u32 seed) {
+  u32 s = seed * 2654435761u + 12345u;
+  for (int i = 0; i < 4; ++i) treeRand(s);
+  const float base = 0.5f;
+  float H    = 3.4f + 1.6f * treeRand(s);                       // trunk height
+  float r0   = 0.20f + 0.05f * treeRand(s);                     // base radius
+  float lean = 0.12f + 0.22f * treeRand(s), la = TAU * treeRand(s);
+  float lx = lean * fcos(la), lz = lean * fsin(la);             // total horizontal drift at the top
+
+  S(x, base + 0.05f, z, r0 * 1.5f, M_TRUNK);                    // root flare
+  for (int i = 0; i < 3; ++i) {                                 // buttress roots
+    float ra = TAU * (i + treeRand(s)) / 3.f;
+    S(x + r0 * 1.5f * fcos(ra), base + 0.04f, z + r0 * 1.5f * fsin(ra), r0 * 0.55f, M_TRUNK);
+  }
+  const int N = 9;                                              // trunk: overlapping spheres on a curve
+  float tx = x, ty = base, tz = z, tr = r0;
+  for (int i = 0; i <= N; ++i) {
+    float t = (float)i / N, bend = t * t;
+    tx = x + lx * bend; tz = z + lz * bend; ty = base + H * t;
+    tr = r0 * (1.f - 0.55f * t);
+    S(tx, ty, tz, tr, M_TRUNK);
+  }
+  for (int i = 0; i < 3; ++i) {                                 // limbs from the upper trunk into the crown
+    float ba = TAU * (i + 0.3f * treeRand(s)) / 3.f + la;
+    float bx = fcos(ba), bz = fsin(ba), len = 0.9f + 0.6f * treeRand(s);
+    for (int j = 1; j <= 4; ++j) {
+      float u = (float)j / 4;
+      S(tx + bx * len * u, ty - 0.5f + len * u * 0.9f, tz + bz * len * u,
+        tr * (0.75f - 0.45f * u), M_TRUNK);
+    }
+  }
+
+  // crown: central mass plus lobes on a shell, bigger lobes low and outward, small ones on top
+  float cr = 1.3f + 0.35f * treeRand(s), cy = ty + cr * 0.55f;
+  S(tx, cy, tz, cr, M_FOLIAGE);
+  const int LOBES = 11;
+  for (int i = 0; i < LOBES; ++i) {
+    float ang = TAU * (i + treeRand(s)) / LOBES;
+    float elev = -0.15f + 1.0f * treeRand(s);                   // −0.15 … 0.85 rad-ish up the shell
+    float rr = cr * (0.5f + 0.25f * treeRand(s)) * (1.f - 0.3f * elev);
+    float d = cr * (0.75f + 0.2f * treeRand(s)), h = fsqrt(fmaxx(0.f, 1.f - elev * elev));
+    S(tx + d * h * fcos(ang), cy + d * elev, tz + d * h * fsin(ang), rr,
+      treeRand(s) < 0.4f ? M_FOLIAGE2 : M_FOLIAGE);
+  }
+  for (int i = 0; i < 4; ++i) {                                 // sparse leaf clumps hanging below the canopy edge
+    float ang = TAU * treeRand(s), d = cr * (1.0f + 0.3f * treeRand(s));
+    S(tx + d * fcos(ang), cy - cr * (0.1f + 0.3f * treeRand(s)), tz + d * fsin(ang),
+      cr * (0.25f + 0.12f * treeRand(s)), M_FOLIAGE);
+  }
+}
+
 // ── island landscaping, dock ─────────────────────────────────────────────────
 static void buildGrounds() {
   C(0.f, -1.5f, 0.f, ISLAND_R, 2.0f, 1, M_ISLAND);          // island disc: y -3.5 … 0.5
 
-  for (int k = 0; k < 6; ++k) {                             // sculpted trees between path and road
+  for (int k = 0; k < 6; ++k) {                             // trees between path and road
     float a = (30.f + 60.f * k) * (PI / 180.f);
-    float x = 15.5f * fcos(a), z = 15.5f * fsin(a);
-    C(x, 0.5f + 1.6f, z, 0.17f, 1.6f, 1, M_TRUNK);
-    S(x, 4.0f, z, 1.45f, M_FOLIAGE);
-    S(x + 0.7f, 3.3f, z + 0.3f, 0.95f, M_FOLIAGE);
-    S(x - 0.6f, 3.5f, z - 0.4f, 0.9f, M_FOLIAGE);
+    buildTree(15.5f * fcos(a), 15.5f * fsin(a), 1000u + 77u * (u32)k);
   }
   for (int k = 0; k < 8; ++k) {                             // garden lamps along the walkway
     float a = (22.5f + 45.f * k) * (PI / 180.f);
