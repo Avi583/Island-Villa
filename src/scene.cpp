@@ -254,7 +254,7 @@ void buildScene() {
   buildLights();
   g_staticLights = g_lightCount;
   buildCarTemplate();
-  addCar(18.6f,  9.f, 0.f,        1.f, M_PAINT0);   // inner lane, anticlockwise
+  addCar(18.6f, 4.5f, 0.f,       1.f, M_PAINT0);   // inner lane, anticlockwise
   g_bvh.build();
   updateDynamic(0.f);
 }
