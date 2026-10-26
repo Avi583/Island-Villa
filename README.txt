@@ -24,7 +24,7 @@ WHAT THE C++ DOES
   rotated frame after a bounding-sphere test.
 - Water: refraction (index 1.333), Fresnel reflection, depth absorption
   (Beer-Lambert) and animated waves from a sum of directional sine waves
-  with analytic normals. Used for both the lake and the rooftop pool.
+  with analytic normals. Used for both the lake and the outdoor pool.
 - Thin architectural glass, clear-coat car paint, brushed and mirror metals.
 - Soft sun shadows from an area sun, one bounce of global illumination,
   point lights for neon, lamps and headlights.

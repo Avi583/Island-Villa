@@ -1,7 +1,7 @@
 #pragma once
 // ─────────────────────────────────────────────────────────────────────────────
 // scene.h — materials, lights and the world: a cantilevered glass house on a
-// round island, a rooftop infinity pool, a lake, and cars circling a ring road.
+// round island, an outdoor pool, a lake, and cars circling a ring road.
 // ─────────────────────────────────────────────────────────────────────────────
 #include "geometry.h"
 
