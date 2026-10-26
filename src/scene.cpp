@@ -141,6 +141,14 @@ static void buildHouse() {
   B(-PX, FLOOR, PZ0 - 0.2f, PX, 0.5f, PZ0, M_POOLTILE);
   B(-PX, FLOOR, PZ1,        PX, 0.5f, PZ1 + 0.2f, M_POOLTILE);
   B(-PX, FLOOR, PZ0, PX, 0.8f, PZ1, M_POOL);
+  // Coping: close the 0.4 m strip of bare island cap at each end of the opening, then a raised
+  // tile lip (0.08 m, 0.25 m wide) around the water so the edge reads from up close.
+  B(-PX, 0.5f, PZ0 - 0.6f, PX, 0.8f, PZ0, M_CONCRETE);
+  B(-PX, 0.5f, PZ1,        PX, 0.8f, PZ1 + 0.6f, M_CONCRETE);
+  B(-PX - 0.25f, 0.8f, PZ0 - 0.25f, PX + 0.25f, 0.88f, PZ0,          M_POOLTILE);
+  B(-PX - 0.25f, 0.8f, PZ1,         PX + 0.25f, 0.88f, PZ1 + 0.25f, M_POOLTILE);
+  B(-PX - 0.25f, 0.8f, PZ0, -PX,        0.88f, PZ1, M_POOLTILE);
+  B( PX,         0.8f, PZ0,  PX + 0.25f, 0.88f, PZ1, M_POOLTILE);
 }
 
 // ── palm trees: tall curved tapered trunk, ringed bulges, drooping fronds, coconut cluster ──

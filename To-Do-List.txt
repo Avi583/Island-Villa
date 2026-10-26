@@ -1,51 +1,51 @@
 ISLAND VILLA - C++ RAY TRACER DEMO
 TO-DO LIST (unfixed and untested items)
-Last updated: Monday, October 26, 2026 (added performance review findings)
+Last updated: Monday, October 26, 2026 (items numbered; completed items moved to Done and Verified)
 =====================================================================
 
 STATUS KEY
   [ ] = open, not started
   [~] = partly done / needs verification
-  [x] = done (kept here for traceability)
+  [x] = done (listed in section 5 only)
 
 
 1. NOT YET TESTED
 ---------------------------------------------------------------------
-[ ] Performance on a real multi-core desktop.
+1a. [ ] Performance on a real multi-core desktop.
     Only tested in a 2-core sandbox (about 5-12 fps at ~230x130 internal
     resolution). On 8+ thread machines it should be much higher, but the
     actual fps, the resolution auto-scaling behaviour and the 36 ms frame
     target in "Balanced" mode have not been measured on real hardware.
 
-[ ] Browsers other than Chromium.
+1b. [ ] Browsers other than Chromium.
     Not tested in Firefox, Safari (macOS / iOS) or Edge. Things to check:
       - WebAssembly SIMD support (build uses -msimd128; Safari needs 16.4+)
       - canvas ctx.filter used by the bloom pass (older Safari ignores it,
         so bloom would silently not appear; the page should still work)
       - pointer lock behaviour for mouse look
 
-[ ] Mobile / touch controls.
+1c. [ ] Mobile / touch controls.
     Left-half drag = move, right-half drag = look. Written but never run on
     a phone or tablet. Also check memory use (one WASM instance per core).
 
-[ ] Live GitHub Pages deployment.
+1d. [ ] Live GitHub Pages deployment.
     Local static serving was verified (all files return 200 and the .wasm is
     served as application/wasm), but the site has not been pushed to GitHub
     or opened from a github.io URL yet.
 
-[ ] Google Fonts loading.
+1e. [ ] Google Fonts loading.
     Blocked inside the build sandbox, so the fonts (Space Grotesk, JetBrains
     Mono) were never seen loading. The page falls back to system fonts if
     they fail, so this is cosmetic only.
 
-[ ] Long-running stability.
+1f. [ ] Long-running stability.
     Not soak-tested (e.g. 10+ minutes of walking, repeated window resizes,
     switching quality modes many times) for memory growth or stalls.
 
-[ ] Screenshot and Fullscreen buttons.
+1g. [ ] Screenshot and Fullscreen buttons.
     Wired up but never clicked in a real browser session.
 
-[ ] Collision edge cases.
+1h. [ ] Collision edge cases.
     Walking onto / off the boardwalk dock, sliding along the glass walls and
     around pillars, trees and lamps has only been reasoned through in code,
     not walked in the browser.
@@ -53,36 +53,32 @@ STATUS KEY
 
 2. KNOWN ISSUES - NOT YET FIXED
 ---------------------------------------------------------------------
-[ ] Image is very soft/blocky while moving on slow CPUs.
+2a. [ ] Image is very soft/blocky while moving on slow CPUs.
     Auto-resolution can drop to ~18% scale. A WebGL edge-aware upscale/sharpen
     pass ("Sharp upscale" toggle) now runs when presenting the frame, but it
     has not been checked in a real browser. If still too soft, consider
     raising the minimum scale or turning global illumination off while moving.
 
-[ ] Daytime glass is slightly grainy until the camera stops.
+2b. [ ] Daytime glass is slightly grainy until the camera stops.
     Comes from soft-shadow and bounce-light sampling on the interior seen
     through the glass. Converges when standing still (progressive
     accumulation). A temporal reprojection pass would fix this while moving
     but is a large change.
 
-[ ] Chrome pillars sparkle slightly at night.
+2c. [ ] Chrome pillars sparkle slightly at night.
     Mirror reflections of tiny bright emitters. Minor; could clamp specular
     contribution or slightly increase chrome roughness.
 
-[ ] Bloom is uniform, not thresholded.
+2d. [ ] Bloom is uniform, not thresholded.
     The glow pass blurs the whole frame (canvas filter), so bright sky also
     gets a soft haze. A proper bright-pass bloom would need to be computed in
     C++ or a second canvas.
 
-[ ] Cars pass through the player and each other is never checked.
+2e. [ ] Cars pass through the player and each other is never checked.
     Cars follow fixed circular lanes at constant speed, so same-lane cars
     never collide, but the player is not blocked by cars.
 
-[ ] Pool water has no visible rim/coping.
-    The water volume runs edge to edge as the "glass walls". A thin rim or
-    a separate glass pane would read more realistically up close.
-
-[ ] Interior is simple.
+2g. [ ] Interior is simple.
     Ground floor has a kitchen island, sofa, table and light strips; upper
     floor is suggested only by the lit ribbon window.
 
@@ -93,28 +89,7 @@ STATUS KEY
 none measured yet. Re-check fps on real hardware after each change.)
 
 Frame pipeline (main.js / worker.js)
-[x] Workers sit idle between frames.  (FIXED Oct 26, 2026)
-    Now: the next frame is dispatched as soon as the last rows arrive, into
-    the second of two buffers; the finished frame is shown on the next
-    rAF. Headless Chrome (24 threads, SwiftShader): still 2.3 -> 3.8 Mpix/s,
-    walking 0.9 -> 1.7 Mpix/s (includes the GI change below).
-    Original note:
-    The next frame is only dispatched on the next requestAnimationFrame
-    after present() finishes, so all workers wait for the main-thread
-    denoise + upload + bloom AND up to one vsync interval. Dispatch the next
-    frame straight away when the last rows arrive (before denoising), and
-    double-buffer img/img32 so the next frame renders while this one shows.
-
-[x] Bilateral denoise runs in JavaScript on the main thread.  (FIXED)
-    Now a WebGL pass at render resolution feeding the upscale shader. The
-    JS version remains as the fallback when WebGL is unavailable.
-    Original note:
-    denoise() does 25 taps per pixel with Math.min/max clamps in the inner
-    loop, blocking the main thread each frame. Move it into the existing
-    WebGL upscale shader (or a second WebGL pass) so it runs on the GPU and
-    merges with the upscale/sharpen step.
-
-[~] Extra copies when presenting through WebGL.
+3a. [~] Extra copies when presenting through WebGL.
     PARTLY FIXED: the frame is now uploaded directly from its ImageData
     (no putImageData, no canvas readback). Still left: the WebGL canvas is
     drawImage'd into the visible 2D canvas.
@@ -127,79 +102,60 @@ Frame pipeline (main.js / worker.js)
     canvas the WebGL canvas (needs preserveDrawingBuffer or a render before
     toBlob for the Screenshot button).
 
-[ ] Bloom blurs at full canvas resolution.
+3b. [ ] Bloom blurs at full canvas resolution.
     ctx.filter = blur(canvas.width/90 px) on a full-size drawImage is
     expensive, and in Firefox/Safari it may run on the CPU. Blur a small
     (e.g. 1/4 size) copy and scale it up, or do bloom in the WebGL pass
-    (which would also allow the thresholded bloom listed in section 2).
+    (which would also allow the thresholded bloom listed in 2d).
 
-[ ] Auto-resolution changes the size almost every frame while adapting.
+3c. [ ] Auto-resolution changes the size almost every frame while adapting.
     Every size change reallocates two ImageData buffers, resets each
     worker's accumulator and resizes the low canvas. Snap the render width
     to steps (e.g. multiples of 16 px) and add hysteresis.
 
-[ ] No idle when the image has converged.
+3d. [ ] No idle when the image has converged.
     In Photo mode / frozen time with a still camera, frames keep rendering
     forever. Stop dispatching after N samples (e.g. 512 spp) until the
     camera or settings change, to save CPU and battery.
 
-[ ] Worker count leaves no core for the main thread.
+3e. [ ] Worker count leaves no core for the main thread.
     threads = hardwareConcurrency, but the main thread also does input,
     denoise and presenting. Try hardwareConcurrency - 1 and compare fps.
 
-[ ] Settings panel uses backdrop-filter: blur(14px) over a canvas that
-    changes every frame, so the compositor re-blurs it each frame. Minor
-    GPU cost; a solid translucent background would avoid it.
+3f. [ ] Settings panel backdrop-filter.
+    The panel uses backdrop-filter: blur(14px) over a canvas that changes
+    every frame, so the compositor re-blurs it each frame. Minor GPU cost;
+    a solid translucent background would avoid it.
 
 Ray tracer (C++)
-[x] GI costs full price at low weight.  (FIXED - JS only, no rebuild)
-    Balanced giMove is now 0; GI fades in over the first 4 still frames so
-    it does not pop on when the camera stops.
-    Original note:
-    While moving, Balanced mode uses gi = 0.2, but indirectGI() still
-    traces a full bounce ray plus a shadow ray on every diffuse hit just
-    to weight it at 20%. Either set giMove to 0, or trace GI only on a
-    fraction of pixels (e.g. checkerboard alternating per frame) and scale.
-
-[ ] Island cylinder is inside the BVH.
+3g. [ ] Island cylinder is inside the BVH.
     It is a 48 m wide primitive whose box covers the whole scene, so
     whichever BVH node holds it is huge and nearly every ray descends into
     it. Intersect it analytically in intersectScene() like the lake plane.
     Also test the lake/sand planes BEFORE BVH traversal so the tighter
     tmax prunes BVH nodes behind the water.
 
-[ ] BVH nodes are box-tested twice.
+3h. [ ] BVH nodes are box-tested twice.
     traverse() tests both children's boxes before pushing them, then tests
     the popped node's box again. Push the entry distance with the node and,
     on pop, skip it only if tnear >= h.t (no second slab test).
 
-[ ] Haze/fog is computed even when it is zero.
-    tracePath() calls hazeColor() (a full skyColor: atan2, 4 sines, 2 pows,
-    a normalize) for every pixel that hits geometry, even within 30 m where
-    fog is exactly 0. shadeReflection() does the same within 40 m. Guard
-    both with "if (fog > 0)".
-
-[ ] Sky halo uses general pow().
-    skyColor() calls fpow(m, 6) and fpow(m, 80) (each an exp2 + log2) for
-    every sky, GI-miss and haze lookup. Use multiplies: m6 = m2*m2*m2, and
-    m80 by repeated squaring (m5 -> m10 -> m20 -> m40 -> m80).
-
-[ ] Glass and water always trace both reflection and transmission.
+3k. [ ] Glass and water always trace both reflection and transmission.
     Every front-facing glass hit at depth < 4 spawns a shadeReflection()
     (up to 4 more intersections + lighting) even though F is ~4.5% and
     the ray usually passes through 2+ panes. Pick reflection OR
     transmission stochastically by F (weighted), or skip the reflection
     when F * throughput is tiny.
 
-[ ] Tone mapping uses pow per channel.
+3l. [ ] Tone mapping uses pow per channel.
     toSRGB8() calls fpow(x, 1/2.2) three times per pixel. A 4096-entry
     lookup table built once in rt_init() is cheaper.
 
-[ ] BVH leaves read primitives through idx[].
+3m. [ ] BVH leaves read primitives through idx[].
     Reorder prims[] into BVH order after build() so leaf loops read
     contiguous memory without the index indirection.
 
-[ ] Rays are traced one at a time despite -msimd128.
+3n. [ ] Rays are traced one at a time despite -msimd128.
     The build enables WASM SIMD but V3 math is scalar. Packet tracing
     (4 rays per SIMD lane group) or SIMD slab tests in hitAABB would be the
     largest single speed-up for the tracer, but is a big change.
@@ -207,25 +163,40 @@ Ray tracer (C++)
 
 4. OPTIONAL - SKIPPED AT YOUR REQUEST
 ---------------------------------------------------------------------
-[ ] GitHub Actions workflow to rebuild raytracer.wasm automatically on
+4a. [ ] GitHub Actions workflow to rebuild raytracer.wasm automatically on
     every push. Not included: the .wasm is prebuilt, so rebuild manually
     with ./build.sh after changing the C++.
-[ ] Step-by-step GitHub Pages setup guide. Not included; README.txt has a
+4b. [ ] Step-by-step GitHub Pages setup guide. Not included; README.txt has a
     short note on which folder to serve.
+4c. [ ] Put clang / wasm32 on the PATH permanently.
+    LLVM is installed at C:\Program Files\LLVM\bin (clang++ and wasm-ld are
+    there) but is not on PATH, so ./build.sh fails with "clang++: command
+    not found". Add that folder to the user PATH, or have build.sh default
+    CXX to that path. Until then build with:
+      PATH="$PATH:/c/Program Files/LLVM/bin" ./build.sh
 
 
 5. DONE AND VERIFIED (for reference)
 ---------------------------------------------------------------------
-[x] C++ ray tracer compiles to a 52 KB freestanding WebAssembly module
+5a. [x] C++ ray tracer compiles to a 52 KB freestanding WebAssembly module
     (clang + wasm-ld, no Emscripten, no libc).
-[x] Renders correctly through the multi-instance, interleaved-row path
+5b. [x] Renders correctly through the multi-instance, interleaved-row path
     used by the browser workers (checked from 6 camera views).
-[x] Sky gradient fixed (no lilac cast); stars only after sunset.
-[x] Night/dusk speckle (fireflies) removed.
-[x] Upper-floor ribbon window shows mullions and individually lit rooms.
-[x] Page loads in headless Chromium with no script errors; walking
+5c. [x] Sky gradient fixed (no lilac cast); stars only after sunset.
+5d. [x] Night/dusk speckle (fireflies) removed.
+5e. [x] Upper-floor ribbon window shows mullions and individually lit rooms.
+5f. [x] Page loads in headless Chromium with no script errors; walking
     (W/A) and the perimeter tour (T) run without errors.
-[x] Checkbox row layout in the settings panel fixed.
-[x] Slider values (sun elevation, sun direction, exposure) now shown live.
-[x] README.txt written.
-[x] Repository packaged as island-villa.zip.
+5g. [x] Checkbox row layout in the settings panel fixed.
+5h. [x] Slider values (sun elevation, sun direction, exposure) now shown live.
+5i. [x] README.txt written.
+5j. [x] Repository packaged as island-villa.zip.
+5k. [x] Workers sit idle between frames (fixed Oct 26, 2026).
+5l. [x] Bilateral denoise moved from JS main thread to WebGL pass (JS kept
+    as fallback).
+5m. [x] GI costs full price at low weight (fixed; JS only, no rebuild).
+5n. [x] Pool rim added: tile coping lip around the water, and bare cap strips
+    at the pool ends filled (wasm rebuilt; not yet viewed in a browser).
+5o. [x] Haze/fog only computed when fog > 0 (wasm rebuilt; fps not measured).
+5p. [x] Sky halo uses multiplies instead of pow (wasm rebuilt; fps not
+    measured).

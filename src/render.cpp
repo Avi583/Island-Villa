@@ -96,7 +96,9 @@ static V3 skyColor(V3 d, bool sunDisk) {
   V3 col = t < 0.32f ? mix(hor, g_f.midSky, t / 0.32f)
                      : mix(g_f.midSky, g_f.zenith, sat((t - 0.32f) / 0.68f));
   float m = fmaxx(mu, 0.f);
-  col += g_f.sunCol * (0.05f * fpow(m, 6.f) + 0.22f * fpow(m, 80.f));
+  float m2 = m * m, m4 = m2 * m2, m8 = m4 * m4, m16 = m8 * m8;      // m^6 and m^80 by squaring (no exp2/log2)
+  float m6 = m4 * m2, m80 = m16 * m16 * m16 * m16 * m16;
+  col += g_f.sunCol * (0.05f * m6 + 0.22f * m80);
   if (sunDisk && mu > 0.99995f) col += g_f.sunCol * 45.f;
 
   if (sunDisk && g_f.night > 0.01f && y > 0.f) {     // stars: camera & mirror rays only, never GI
@@ -324,7 +326,8 @@ static V3 shadeReflection(Ray r, Rng& g, bool shadows) {
         float F = schlick(0.02f, fabsx(dot(r.d, wn)));
         V3 deep = (h.mat == M_POOL ? V3(0.05f, 0.30f, 0.34f) : V3(0.012f, 0.05f, 0.055f))
                 * (luminance(g_f.sunCol) * 0.35f + 0.15f);
-        return T * mix(skyColor(reflect(r.d, wn), true) * F + deep * (1.f - F), hazeColor(r.d), fog);
+        V3 wc = skyColor(reflect(r.d, wn), true) * F + deep * (1.f - F);
+        return T * (fog > 0.f ? mix(wc, hazeColor(r.d), fog) : wc);
       }
       default: {
         V3 alb = texAlbedo(m, p, n);
@@ -333,7 +336,7 @@ static V3 shadeReflection(Ray r, Rng& g, bool shadows) {
           float F = schlick(m.f0, fabsx(dot(r.d, n)));
           c = c * (1.f - F) + skyColor(reflect(r.d, n), false) * F;
         }
-        return T * mix(c, hazeColor(r.d), fog);
+        return T * (fog > 0.f ? mix(c, hazeColor(r.d), fog) : c);
       }
     }
   }
@@ -416,7 +419,7 @@ static V3 tracePath(Ray r, Rng& g, float gi) {
 
   if (firstT < 9e4f) {                                          // aerial perspective
     float fog = 1.f - fexp(-fmaxx(firstT - 30.f, 0.f) * 0.0022f);
-    L = mix(L, hazeColor(firstDir), fog);
+    if (fog > 0.f) L = mix(L, hazeColor(firstDir), fog);
   }
   return L;
 }
