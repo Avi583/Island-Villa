@@ -126,9 +126,13 @@ static void buildHouse() {
 
   // Outdoor pool at floor level: a deck continuing the ground-floor slab (top y = 0.8),
   // with a tiled floor and a water volume whose sides act as the glass walls
-  B(-5.f, 0.5f, 6.f, 5.f, 0.8f, 13.f, M_CONCRETE);
-  B(-3.8f, 0.8f, 8.6f, 3.8f, 0.85f, 12.2f, M_POOLTILE);
-  B(-3.8f, 0.84f, 8.6f, 3.8f, 1.6f, 12.2f, M_POOL);
+  // Four slabs frame the opening; the tiled floor sits just below the deck and the water is flush with it.
+  B(-5.f,  0.5f, 6.f,   5.f,  0.8f, 8.6f,  M_CONCRETE);
+  B(-5.f,  0.5f, 12.2f, 5.f,  0.8f, 13.f,  M_CONCRETE);
+  B(-5.f,  0.5f, 8.6f,  -3.8f, 0.8f, 12.2f, M_CONCRETE);
+  B(3.8f,  0.5f, 8.6f,  5.f,  0.8f, 12.2f, M_CONCRETE);
+  B(-3.8f, 0.5f, 8.6f,  3.8f, 0.55f, 12.2f, M_POOLTILE);
+  B(-3.8f, 0.55f, 8.6f, 3.8f, 0.8f, 12.2f, M_POOL);
 }
 
 // ── island landscaping, dock ─────────────────────────────────────────────────
@@ -168,7 +172,7 @@ static void buildLights() {
   L(6.2f, 3.7f, 2.f,  V3(0.25f, 1.7f, 2.3f), 5.f);
   L(6.2f, 3.7f, -4.f, V3(0.25f, 1.7f, 2.3f), 5.f);
   L(-5.f, 7.2f, 7.4f, V3(2.2f, 0.25f, 1.5f), 4.f);          // roof magenta
-  L(0.f, 1.3f, 10.4f, V3(0.3f, 1.3f, 1.7f), 4.5f);          // pool light
+  L(0.f, 1.1f, 10.4f, V3(0.3f, 1.3f, 1.7f), 4.5f);          // pool light
   L(-5.f, 8.35f, 0.f, V3(2.5f, 1.8f, 1.0f), 5.f);           // dome orb
 }
 

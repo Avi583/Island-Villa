@@ -293,11 +293,6 @@ function collide(p, prev) {
     const i = pen.indexOf(Math.min(...pen));
     if (i === 0) p.x = HOUSE.x0; else if (i === 1) p.x = HOUSE.x1; else if (i === 2) p.z = HOUSE.z0; else p.z = HOUSE.z1;
   }
-  if (p.x > -4.1 && p.x < 4.1 && p.z > 8.3 && p.z < 12.5) {       // pool water + body radius
-    const pen = [p.x + 4.1, 4.1 - p.x, p.z - 8.3, 12.5 - p.z];
-    const i = pen.indexOf(Math.min(...pen));
-    if (i === 0) p.x = -4.1; else if (i === 1) p.x = 4.1; else if (i === 2) p.z = 8.3; else p.z = 12.5;
-  }
   const prevOnDock = Math.hypot(prev.x, prev.z) > 23.35;
   const r = Math.hypot(p.x, p.z);
   if (prevOnDock || (r > 23.3 && p.z > 0 && Math.abs(p.x) < 1.2)) {       // boardwalk
