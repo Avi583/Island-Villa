@@ -25,7 +25,7 @@ const state = {
 
 const QUALITY = {
   performance: { target: 24, giStill: 0.0, giMove: 0.0, maxW: 960 },
-  balanced:    { target: 36, giStill: 0.7, giMove: 0.2, maxW: 1280 },
+  balanced:    { target: 36, giStill: 0.7, giMove: 0.0, maxW: 1280 },   // GI ray costs the same at any weight, so none while moving
   photo:       { target: 1e9, giStill: 1.0, giMove: 1.0, maxW: 1920 },
 };
 
@@ -76,10 +76,19 @@ function onWorkerMessage(e) {
 }
 
 // ── frame pipeline ──────────────────────────────────────────────────────────
-let img = null, img32 = null, dimg = null, dimg32 = null, rw = 0, rh = 0;
-let busy = false, pending = 0, frameNo = 0, dispatchT = 0, workerMs = 0;
+// Two frame buffers: workers fill one while the other waits for the next vsync to be shown.
+// A new frame is dispatched the moment the previous one completes, so the workers never sit
+// idle while the main thread denoises and presents, or while it waits for requestAnimationFrame.
+let bufs = [], filling = null, latest = null, rw = 0, rh = 0;
+let dimg = null, dimg32 = null;                           // JS denoise output (no-WebGL fallback)
+let busy = false, pending = 0, frameNo = 0, dispatchT = 0, workerMs = 0, doneMs = 0;
 let accumN = 0, lastKey = '';
-let fps = 0, lastPresent = performance.now();
+let fps = 0, lastDone = performance.now();
+
+function makeBuffer(w, h) {
+  const img = new ImageData(w, h);
+  return { w, h, img, img32: new Uint32Array(img.data.buffer), accumN: 0, frozen: false };
+}
 
 function renderSize() {
   const q = QUALITY[state.quality];
@@ -94,11 +103,8 @@ function dispatch() {
   const [w, h] = renderSize();
   if (w !== rw || h !== rh) {
     rw = w; rh = h;
-    low.width = w; low.height = h;
-    img = lctx.createImageData(w, h);
-    img32 = new Uint32Array(img.data.buffer);
-    dimg = lctx.createImageData(w, h);
-    dimg32 = new Uint32Array(dimg.data.buffer);
+    bufs = [makeBuffer(w, h), makeBuffer(w, h)];          // `latest` keeps its old buffer until shown
+    filling = bufs[0];
     accumN = 0;
   }
   const cam = [state.x, state.eye, state.z, state.yaw, state.pitch];
@@ -113,9 +119,12 @@ function dispatch() {
   // a short temporal window (EMA) while cars and waves are moving.
   let blend = 1 / accumN;
   if (!timeFrozen) blend = Math.max(blend, 0.1);
+  // GI fades in over the first few still frames instead of popping on when the camera stops.
   const q = QUALITY[state.quality];
-  const gi = still ? q.giStill : q.giMove;
+  const gi = still ? q.giMove + (q.giStill - q.giMove) * Math.min(1, (accumN - 1) / 4) : q.giMove;
 
+  filling.accumN = accumN;
+  filling.frozen = timeFrozen;
   busy = true;
   pending = workers.length;
   dispatchT = performance.now();
@@ -134,17 +143,30 @@ function receiveRows(m) {
     const src = new Uint32Array(m.buf);
     for (let i = 0; i < m.rows; i++) {
       const y = m.index + i * threads;
-      img32.set(src.subarray(i * m.w, (i + 1) * m.w), y * m.w);
+      filling.img32.set(src.subarray(i * m.w, (i + 1) * m.w), y * m.w);
     }
   }
   workerMs = Math.max(workerMs, m.ms);
-  if (--pending === 0) present();
+  if (--pending === 0) frameDone();
+}
+
+function frameDone() {
+  const now = performance.now();
+  fps = fps * 0.85 + (1000 / Math.max(1, now - lastDone)) * 0.15;
+  lastDone = now;
+  doneMs = workerMs;                                      // workerMs restarts with the next dispatch
+  latest = filling;                                       // newest finished frame; an unshown older one is dropped
+  filling = filling === bufs[0] ? bufs[1] : bufs[0];
+  adaptResolution(now - dispatchT, latest.accumN);
+  busy = false;
+  if (!document.hidden) dispatch();                       // hidden tab: the rAF loop restarts rendering
 }
 
 // Edge-aware (bilateral) denoise on the 8-bit display image. Each pixel becomes a weighted
 // average of its 5×5 neighbourhood; the weight falls off with spatial distance and, more
 // steeply, with colour difference, so noise averages out while real edges stay sharp.
 // Only the display copy is filtered — the float accumulator in WASM is untouched.
+// Runs on the GPU (see GPU_DENOISE_FS); this JS version is the fallback without WebGL.
 const DEN_BASE_SIGMA = 28;                                // colour tolerance in 8-bit units
 const DEN_SPATIAL = new Float32Array(25);
 for (let dy = -2; dy <= 2; dy++)
@@ -178,131 +200,180 @@ function denoise(src, dst, w, h, sigma) {
   }
 }
 
-// Edge-aware upscale + sharpen, run on the GPU when the low-res frame is stretched to the canvas.
-// Each output pixel is filtered along the local edge direction (so edges stay clean instead of
-// stair-stepping or smearing), then sharpened with an unsharp mask clamped to the neighbourhood's
-// min/max (so it adds crispness without ringing). Falls back to a plain drawImage without WebGL.
-const up = { gl: null, prog: null, tex: null, loc: null, failed: false, canvas: null };
-
-function initUpscaler() {
-  up.canvas = document.createElement('canvas');
-  const gl = up.canvas.getContext('webgl', { alpha: false, antialias: false, premultipliedAlpha: false });
-  if (!gl) return false;
-  const vs = `attribute vec2 p; varying vec2 uv;
-    void main() { uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5); gl_Position = vec4(p, 0.0, 1.0); }`;
-  const fs = `precision highp float;
-    varying vec2 uv; uniform sampler2D tex; uniform vec2 texel; uniform float amount;
-    float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
-    vec3 s(vec2 p) { return texture2D(tex, p).rgb; }
-    void main() {
-      vec3 c = s(uv);
-      vec3 n = s(uv + vec2(0.0, -texel.y)), so = s(uv + vec2(0.0, texel.y));
-      vec3 w = s(uv + vec2(-texel.x, 0.0)), e = s(uv + vec2(texel.x, 0.0));
-      // luma gradient -> edge tangent; filter along it only
-      vec2 g = vec2(luma(e) - luma(w), luma(so) - luma(n));
-      float gl2 = dot(g, g);
-      vec3 base = c;
-      if (gl2 > 1e-5) {
-        vec2 t = vec2(-g.y, g.x) * inversesqrt(gl2) * texel * 0.7;
-        base = (c * 2.0 + s(uv + t) + s(uv - t)) * 0.25;
+// GPU present path. The frame is uploaded straight from its pixel buffer, optionally
+// denoised at render resolution into a framebuffer texture, then upscaled to the canvas.
+// Upscale: each output pixel is filtered along the local edge direction (so edges stay clean
+// instead of stair-stepping or smearing), then sharpened with an unsharp mask clamped to the
+// neighbourhood's min/max (so it adds crispness without ringing).
+const GPU_VS = `attribute vec2 p; varying vec2 uv;
+  void main() { uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }`;
+const GPU_VS_FLIP = `attribute vec2 p; varying vec2 uv;
+  void main() { uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5); gl_Position = vec4(p, 0.0, 1.0); }`;
+const GPU_DENOISE_FS = `precision highp float;
+  varying vec2 uv; uniform sampler2D tex; uniform vec2 texel; uniform float k;
+  void main() {
+    vec3 c = texture2D(tex, uv).rgb, sum = vec3(0.0);
+    float sw = 0.0;
+    for (int dy = -2; dy <= 2; dy++)
+      for (int dx = -2; dx <= 2; dx++) {
+        vec2 o = vec2(float(dx), float(dy));
+        vec3 q = texture2D(tex, uv + o * texel).rgb, d = q - c;
+        float w = exp(-dot(o, o) / 4.5 - dot(d, d) * k);   // spatial σ = 1.5 px, k = 255² / 2σ²
+        sum += q * w; sw += w;
       }
-      // contrast-clamped unsharp mask
-      vec3 blur = (n + so + w + e) * 0.25;
-      vec3 lo = min(min(n, so), min(min(w, e), c)), hi = max(max(n, so), max(max(w, e), c));
-      vec3 outc = clamp(base + (base - blur) * amount, lo, hi);
-      gl_FragColor = vec4(outc, 1.0);
-    }`;
+    gl_FragColor = vec4(sum / sw, 1.0);
+  }`;
+const GPU_UPSCALE_FS = `precision highp float;
+  varying vec2 uv; uniform sampler2D tex; uniform vec2 texel; uniform float amount;
+  float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+  vec3 s(vec2 p) { return texture2D(tex, p).rgb; }
+  void main() {
+    vec3 c = s(uv);
+    if (amount <= 0.0) { gl_FragColor = vec4(c, 1.0); return; }   // plain bilinear
+    vec3 n = s(uv + vec2(0.0, -texel.y)), so = s(uv + vec2(0.0, texel.y));
+    vec3 w = s(uv + vec2(-texel.x, 0.0)), e = s(uv + vec2(texel.x, 0.0));
+    // luma gradient -> edge tangent; filter along it only
+    vec2 g = vec2(luma(e) - luma(w), luma(so) - luma(n));
+    float gl2 = dot(g, g);
+    vec3 base = c;
+    if (gl2 > 1e-5) {
+      vec2 t = vec2(-g.y, g.x) * inversesqrt(gl2) * texel * 0.7;
+      base = (c * 2.0 + s(uv + t) + s(uv - t)) * 0.25;
+    }
+    // contrast-clamped unsharp mask
+    vec3 blur = (n + so + w + e) * 0.25;
+    vec3 lo = min(min(n, so), min(min(w, e), c)), hi = max(max(n, so), max(max(w, e), c));
+    vec3 outc = clamp(base + (base - blur) * amount, lo, hi);
+    gl_FragColor = vec4(outc, 1.0);
+  }`;
+const gpu = { gl: null, failed: false, canvas: null, srcTex: null, fbo: null, fboTex: null, fw: 0, fh: 0, den: null, up: null };
+
+function initGPU() {
+  gpu.canvas = document.createElement('canvas');
+  const gl = gpu.canvas.getContext('webgl', { alpha: false, antialias: false, premultipliedAlpha: false });
+  if (!gl) return false;
   const sh = (type, src) => {
     const o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o);
     return gl.getShaderParameter(o, gl.COMPILE_STATUS) ? o : null;
   };
-  const v = sh(gl.VERTEX_SHADER, vs), f = sh(gl.FRAGMENT_SHADER, fs);
-  if (!v || !f) return false;
-  const prog = gl.createProgram();
-  gl.attachShader(prog, v); gl.attachShader(prog, f); gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
-  gl.useProgram(prog);
+  const program = (vsSrc, fsSrc, uniforms) => {
+    const v = sh(gl.VERTEX_SHADER, vsSrc), f = sh(gl.FRAGMENT_SHADER, fsSrc);
+    if (!v || !f) return null;
+    const prog = gl.createProgram();
+    gl.attachShader(prog, v); gl.attachShader(prog, f);
+    gl.bindAttribLocation(prog, 0, 'p');                  // both programs share one quad
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+    const loc = { prog };
+    for (const u of uniforms) loc[u] = gl.getUniformLocation(prog, u);
+    return loc;
+  };
+  gpu.den = program(GPU_VS, GPU_DENOISE_FS, ['texel', 'k']);
+  gpu.up = program(GPU_VS_FLIP, GPU_UPSCALE_FS, ['texel', 'amount']);
+  if (!gpu.den || !gpu.up) return false;
   gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  const pl = gl.getAttribLocation(prog, 'p');
-  gl.enableVertexAttribArray(pl);
-  gl.vertexAttribPointer(pl, 2, gl.FLOAT, false, 0, 0);
-  up.tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, up.tex);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  up.loc = { texel: gl.getUniformLocation(prog, 'texel'), amount: gl.getUniformLocation(prog, 'amount') };
-  up.gl = gl; up.prog = prog;
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  const texture = () => {
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  };
+  gpu.srcTex = texture();
+  gpu.fboTex = texture();
+  gpu.fbo = gl.createFramebuffer();
+  gpu.gl = gl;
   return true;
 }
 
-// Returns true if the frame was drawn to the main canvas by the GPU pass.
-function drawUpscaled(amount) {
-  if (up.failed) return false;
-  if (!up.gl && !initUpscaler()) { up.failed = true; return false; }
-  const gl = up.gl;
-  if (gl.isContextLost()) { up.failed = true; return false; }
-  if (up.canvas.width !== canvas.width || up.canvas.height !== canvas.height) {
-    up.canvas.width = canvas.width; up.canvas.height = canvas.height;
+// Draws frame `f` to the main canvas on the GPU (denoised when sigma > 0, sharpened when
+// amount > 0). Returns the full-resolution source for the bloom pass, or null without WebGL.
+function drawGPU(f, sigma, amount) {
+  if (gpu.failed) return null;
+  if (!gpu.gl && !initGPU()) { gpu.failed = true; return null; }
+  const gl = gpu.gl;
+  if (gl.isContextLost()) { gpu.failed = true; return null; }
+  let tex = gpu.srcTex;
+  if (sigma > 0) {
+    if (gpu.fw !== f.w || gpu.fh !== f.h) {
+      gl.bindTexture(gl.TEXTURE_2D, gpu.fboTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, f.w, f.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, gpu.fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, gpu.fboTex, 0);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) { gpu.failed = true; return null; }
+      gpu.fw = f.w; gpu.fh = f.h;
+    }
+    tex = gpu.fboTex;
+  }
+  gl.bindTexture(gl.TEXTURE_2D, gpu.srcTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, f.img);
+  if (sigma > 0) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, gpu.fbo);
+    gl.viewport(0, 0, f.w, f.h);
+    gl.useProgram(gpu.den.prog);
+    gl.uniform2f(gpu.den.texel, 1 / f.w, 1 / f.h);
+    gl.uniform1f(gpu.den.k, 65025 / (2 * sigma * sigma));
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+  if (gpu.canvas.width !== canvas.width || gpu.canvas.height !== canvas.height) {
+    gpu.canvas.width = canvas.width; gpu.canvas.height = canvas.height;
   }
   gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.bindTexture(gl.TEXTURE_2D, up.tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, low);
-  gl.uniform2f(up.loc.texel, 1 / rw, 1 / rh);
-  gl.uniform1f(up.loc.amount, amount);
+  gl.useProgram(gpu.up.prog);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.uniform2f(gpu.up.texel, 1 / f.w, 1 / f.h);
+  gl.uniform1f(gpu.up.amount, amount);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.globalAlpha = 1;
-  ctx.filter = 'none';
-  ctx.drawImage(up.canvas, 0, 0);
-  return true;
+  ctx.drawImage(gpu.canvas, 0, 0);
+  return gpu.canvas;
 }
 
-function present() {
+function present(f) {
   // Strength fades as a frozen/still image converges; while time runs the temporal window stays short, so keep it full.
-  const frozen = state.paused || state.quality === 'photo';
-  const strength = frozen ? 1 / Math.sqrt(Math.max(1, accumN)) : 1;
-  if (state.denoise && strength > 0.15) {
-    denoise(img32, dimg32, rw, rh, DEN_BASE_SIGMA * strength);
-    lctx.putImageData(dimg, 0, 0);
-  } else {
-    lctx.putImageData(img, 0, 0);
-  }
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
+  const strength = f.frozen ? 1 / Math.sqrt(Math.max(1, f.accumN)) : 1;
+  const sigma = state.denoise && strength > 0.15 ? DEN_BASE_SIGMA * strength : 0;
+  // Sharpen harder the more the frame is stretched; skip when nearly 1:1 or once the image has converged.
+  const stretch = canvas.width / f.w;
+  const settled = f.frozen && f.accumN > 8;
+  const amount = state.upscale && stretch > 1.08 && !settled ? Math.min(1.2, 0.35 * (stretch - 1) + 0.25) : 0;
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
   ctx.filter = 'none';
-  // Sharpen harder the more the frame is stretched; skip when nearly 1:1 or once the image has converged.
-  const stretch = canvas.width / rw;
-  const settled = frozen && accumN > 8;
-  const amount = Math.min(1.2, 0.35 * (stretch - 1) + 0.25);
-  if (!(state.upscale && stretch > 1.08 && !settled && drawUpscaled(amount))) {
+  let src = drawGPU(f, sigma, amount);
+  if (!src) {                                             // no WebGL: denoise in JS, let the 2D canvas scale
+    let out = f.img;
+    if (sigma > 0) {
+      if (!dimg || dimg.width !== f.w || dimg.height !== f.h) { dimg = new ImageData(f.w, f.h); dimg32 = new Uint32Array(dimg.data.buffer); }
+      denoise(f.img32, dimg32, f.w, f.h, sigma);
+      out = dimg;
+    }
+    if (low.width !== f.w || low.height !== f.h) { low.width = f.w; low.height = f.h; }
+    lctx.putImageData(out, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(low, 0, 0, canvas.width, canvas.height);
+    src = low;
   }
   if (state.bloom) {                                    // cheap glow pass for neon and sun
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = 0.16;
     ctx.filter = `blur(${Math.round(canvas.width / 90)}px) brightness(1.15) contrast(1.6)`;
-    ctx.drawImage(low, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
     ctx.filter = 'none';
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
   }
-
-  const now = performance.now();
-  const frameMs = now - dispatchT;
-  fps = fps * 0.85 + (1000 / Math.max(1, now - lastPresent)) * 0.15;
-  lastPresent = now;
-  adaptResolution(frameMs);
-  updateStats(frameMs);
-  busy = false;
+  updateStats();
 }
 
-function adaptResolution(frameMs) {
-  if (!state.autoRes || state.quality === 'photo' || accumN > 1) return;   // never resize mid-accumulation
+function adaptResolution(frameMs, n) {
+  if (!state.autoRes || state.quality === 'photo' || n > 1) return;   // never resize mid-accumulation
   const target = QUALITY[state.quality].target;
   if (frameMs > target * 1.25) state.scale *= 0.92;
   else if (frameMs < target * 0.7) state.scale *= 1.04;
@@ -501,14 +572,14 @@ function showValues() {
 }
 
 let statT = 0;
-function updateStats(frameMs) {
+function updateStats() {
   const now = performance.now();
   if (now - statT < 250) return;
   statT = now;
   showValues();
   $('fps').textContent = fps.toFixed(0);
   $('resout').textContent = `${rw}×${rh}`;
-  $('ms').textContent = workerMs.toFixed(0);
+  $('ms').textContent = doneMs.toFixed(0);
   $('mpix').textContent = (rw * rh * fps / 1e6).toFixed(1);
   $('spp').textContent = accumN > 1 && (state.paused || state.quality === 'photo') ? accumN : (accumN > 1 ? 'temporal' : '1');
 }
@@ -528,7 +599,8 @@ function loop(t) {
   const dt = Math.min(0.1, (t - (lastT || t)) / 1000);
   lastT = t;
   update(dt);
-  if (!busy) dispatch();
+  if (!busy && !document.hidden) dispatch();             // kick-start; frameDone() keeps workers busy after that
+  if (latest) { present(latest); latest = null; }
   requestAnimationFrame(loop);
 }
 

@@ -1,6 +1,6 @@
 ISLAND VILLA - C++ RAY TRACER DEMO
 TO-DO LIST (unfixed and untested items)
-Last updated: Sunday, October 25, 2026 (end of build turn 6 - final delivery)
+Last updated: Monday, October 26, 2026 (added performance review findings)
 =====================================================================
 
 STATUS KEY
@@ -87,7 +87,125 @@ STATUS KEY
     floor is suggested only by the lit ribbon window.
 
 
-3. OPTIONAL - SKIPPED AT YOUR REQUEST
+3. PERFORMANCE / RENDERING EFFICIENCY - NOT YET DONE
+---------------------------------------------------------------------
+(Found by code review on Oct 26, 2026. Roughly ordered by expected gain;
+none measured yet. Re-check fps on real hardware after each change.)
+
+Frame pipeline (main.js / worker.js)
+[x] Workers sit idle between frames.  (FIXED Oct 26, 2026)
+    Now: the next frame is dispatched as soon as the last rows arrive, into
+    the second of two buffers; the finished frame is shown on the next
+    rAF. Headless Chrome (24 threads, SwiftShader): still 2.3 -> 3.8 Mpix/s,
+    walking 0.9 -> 1.7 Mpix/s (includes the GI change below).
+    Original note:
+    The next frame is only dispatched on the next requestAnimationFrame
+    after present() finishes, so all workers wait for the main-thread
+    denoise + upload + bloom AND up to one vsync interval. Dispatch the next
+    frame straight away when the last rows arrive (before denoising), and
+    double-buffer img/img32 so the next frame renders while this one shows.
+
+[x] Bilateral denoise runs in JavaScript on the main thread.  (FIXED)
+    Now a WebGL pass at render resolution feeding the upscale shader. The
+    JS version remains as the fallback when WebGL is unavailable.
+    Original note:
+    denoise() does 25 taps per pixel with Math.min/max clamps in the inner
+    loop, blocking the main thread each frame. Move it into the existing
+    WebGL upscale shader (or a second WebGL pass) so it runs on the GPU and
+    merges with the upscale/sharpen step.
+
+[~] Extra copies when presenting through WebGL.
+    PARTLY FIXED: the frame is now uploaded directly from its ImageData
+    (no putImageData, no canvas readback). Still left: the WebGL canvas is
+    drawImage'd into the visible 2D canvas.
+    Original note:
+    Each frame: putImageData into the low canvas, texImage2D FROM that
+    canvas (may force a GPU readback), draw to an offscreen WebGL canvas,
+    then drawImage that into the visible 2D canvas. Upload img.data
+    directly with texImage2D(..., RGBA, UNSIGNED_BYTE, Uint8Array) and skip
+    putImageData when the GPU path is used. Better still, make the visible
+    canvas the WebGL canvas (needs preserveDrawingBuffer or a render before
+    toBlob for the Screenshot button).
+
+[ ] Bloom blurs at full canvas resolution.
+    ctx.filter = blur(canvas.width/90 px) on a full-size drawImage is
+    expensive, and in Firefox/Safari it may run on the CPU. Blur a small
+    (e.g. 1/4 size) copy and scale it up, or do bloom in the WebGL pass
+    (which would also allow the thresholded bloom listed in section 2).
+
+[ ] Auto-resolution changes the size almost every frame while adapting.
+    Every size change reallocates two ImageData buffers, resets each
+    worker's accumulator and resizes the low canvas. Snap the render width
+    to steps (e.g. multiples of 16 px) and add hysteresis.
+
+[ ] No idle when the image has converged.
+    In Photo mode / frozen time with a still camera, frames keep rendering
+    forever. Stop dispatching after N samples (e.g. 512 spp) until the
+    camera or settings change, to save CPU and battery.
+
+[ ] Worker count leaves no core for the main thread.
+    threads = hardwareConcurrency, but the main thread also does input,
+    denoise and presenting. Try hardwareConcurrency - 1 and compare fps.
+
+[ ] Settings panel uses backdrop-filter: blur(14px) over a canvas that
+    changes every frame, so the compositor re-blurs it each frame. Minor
+    GPU cost; a solid translucent background would avoid it.
+
+Ray tracer (C++)
+[x] GI costs full price at low weight.  (FIXED - JS only, no rebuild)
+    Balanced giMove is now 0; GI fades in over the first 4 still frames so
+    it does not pop on when the camera stops.
+    Original note:
+    While moving, Balanced mode uses gi = 0.2, but indirectGI() still
+    traces a full bounce ray plus a shadow ray on every diffuse hit just
+    to weight it at 20%. Either set giMove to 0, or trace GI only on a
+    fraction of pixels (e.g. checkerboard alternating per frame) and scale.
+
+[ ] Island cylinder is inside the BVH.
+    It is a 48 m wide primitive whose box covers the whole scene, so
+    whichever BVH node holds it is huge and nearly every ray descends into
+    it. Intersect it analytically in intersectScene() like the lake plane.
+    Also test the lake/sand planes BEFORE BVH traversal so the tighter
+    tmax prunes BVH nodes behind the water.
+
+[ ] BVH nodes are box-tested twice.
+    traverse() tests both children's boxes before pushing them, then tests
+    the popped node's box again. Push the entry distance with the node and,
+    on pop, skip it only if tnear >= h.t (no second slab test).
+
+[ ] Haze/fog is computed even when it is zero.
+    tracePath() calls hazeColor() (a full skyColor: atan2, 4 sines, 2 pows,
+    a normalize) for every pixel that hits geometry, even within 30 m where
+    fog is exactly 0. shadeReflection() does the same within 40 m. Guard
+    both with "if (fog > 0)".
+
+[ ] Sky halo uses general pow().
+    skyColor() calls fpow(m, 6) and fpow(m, 80) (each an exp2 + log2) for
+    every sky, GI-miss and haze lookup. Use multiplies: m6 = m2*m2*m2, and
+    m80 by repeated squaring (m5 -> m10 -> m20 -> m40 -> m80).
+
+[ ] Glass and water always trace both reflection and transmission.
+    Every front-facing glass hit at depth < 4 spawns a shadeReflection()
+    (up to 4 more intersections + lighting) even though F is ~4.5% and
+    the ray usually passes through 2+ panes. Pick reflection OR
+    transmission stochastically by F (weighted), or skip the reflection
+    when F * throughput is tiny.
+
+[ ] Tone mapping uses pow per channel.
+    toSRGB8() calls fpow(x, 1/2.2) three times per pixel. A 4096-entry
+    lookup table built once in rt_init() is cheaper.
+
+[ ] BVH leaves read primitives through idx[].
+    Reorder prims[] into BVH order after build() so leaf loops read
+    contiguous memory without the index indirection.
+
+[ ] Rays are traced one at a time despite -msimd128.
+    The build enables WASM SIMD but V3 math is scalar. Packet tracing
+    (4 rays per SIMD lane group) or SIMD slab tests in hitAABB would be the
+    largest single speed-up for the tracer, but is a big change.
+
+
+4. OPTIONAL - SKIPPED AT YOUR REQUEST
 ---------------------------------------------------------------------
 [ ] GitHub Actions workflow to rebuild raytracer.wasm automatically on
     every push. Not included: the .wasm is prebuilt, so rebuild manually
@@ -96,7 +214,7 @@ STATUS KEY
     short note on which folder to serve.
 
 
-4. DONE AND VERIFIED (for reference)
+5. DONE AND VERIFIED (for reference)
 ---------------------------------------------------------------------
 [x] C++ ray tracer compiles to a 52 KB freestanding WebAssembly module
     (clang + wasm-ld, no Emscripten, no libc).
