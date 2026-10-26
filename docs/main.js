@@ -19,7 +19,7 @@ const state = {
   drone: false, tour: false, tourAngle: Math.atan2(START.z, START.x),
   time: 0, paused: false,
   sunElev: 7 * DEG, sunAz: 2.3, exposure: 1.0,
-  quality: 'balanced', bloom: true, denoise: true, shadows: true,
+  quality: 'balanced', bloom: true, denoise: true, upscale: true, shadows: true,
   scale: 0.45, autoRes: true,
 };
 
@@ -178,6 +178,88 @@ function denoise(src, dst, w, h, sigma) {
   }
 }
 
+// Edge-aware upscale + sharpen, run on the GPU when the low-res frame is stretched to the canvas.
+// Each output pixel is filtered along the local edge direction (so edges stay clean instead of
+// stair-stepping or smearing), then sharpened with an unsharp mask clamped to the neighbourhood's
+// min/max (so it adds crispness without ringing). Falls back to a plain drawImage without WebGL.
+const up = { gl: null, prog: null, tex: null, loc: null, failed: false, canvas: null };
+
+function initUpscaler() {
+  up.canvas = document.createElement('canvas');
+  const gl = up.canvas.getContext('webgl', { alpha: false, antialias: false, premultipliedAlpha: false });
+  if (!gl) return false;
+  const vs = `attribute vec2 p; varying vec2 uv;
+    void main() { uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5); gl_Position = vec4(p, 0.0, 1.0); }`;
+  const fs = `precision highp float;
+    varying vec2 uv; uniform sampler2D tex; uniform vec2 texel; uniform float amount;
+    float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+    vec3 s(vec2 p) { return texture2D(tex, p).rgb; }
+    void main() {
+      vec3 c = s(uv);
+      vec3 n = s(uv + vec2(0.0, -texel.y)), so = s(uv + vec2(0.0, texel.y));
+      vec3 w = s(uv + vec2(-texel.x, 0.0)), e = s(uv + vec2(texel.x, 0.0));
+      // luma gradient -> edge tangent; filter along it only
+      vec2 g = vec2(luma(e) - luma(w), luma(so) - luma(n));
+      float gl2 = dot(g, g);
+      vec3 base = c;
+      if (gl2 > 1e-5) {
+        vec2 t = vec2(-g.y, g.x) * inversesqrt(gl2) * texel * 0.7;
+        base = (c * 2.0 + s(uv + t) + s(uv - t)) * 0.25;
+      }
+      // contrast-clamped unsharp mask
+      vec3 blur = (n + so + w + e) * 0.25;
+      vec3 lo = min(min(n, so), min(min(w, e), c)), hi = max(max(n, so), max(max(w, e), c));
+      vec3 outc = clamp(base + (base - blur) * amount, lo, hi);
+      gl_FragColor = vec4(outc, 1.0);
+    }`;
+  const sh = (type, src) => {
+    const o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o);
+    return gl.getShaderParameter(o, gl.COMPILE_STATUS) ? o : null;
+  };
+  const v = sh(gl.VERTEX_SHADER, vs), f = sh(gl.FRAGMENT_SHADER, fs);
+  if (!v || !f) return false;
+  const prog = gl.createProgram();
+  gl.attachShader(prog, v); gl.attachShader(prog, f); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const pl = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(pl);
+  gl.vertexAttribPointer(pl, 2, gl.FLOAT, false, 0, 0);
+  up.tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, up.tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  up.loc = { texel: gl.getUniformLocation(prog, 'texel'), amount: gl.getUniformLocation(prog, 'amount') };
+  up.gl = gl; up.prog = prog;
+  return true;
+}
+
+// Returns true if the frame was drawn to the main canvas by the GPU pass.
+function drawUpscaled(amount) {
+  if (up.failed) return false;
+  if (!up.gl && !initUpscaler()) { up.failed = true; return false; }
+  const gl = up.gl;
+  if (gl.isContextLost()) { up.failed = true; return false; }
+  if (up.canvas.width !== canvas.width || up.canvas.height !== canvas.height) {
+    up.canvas.width = canvas.width; up.canvas.height = canvas.height;
+  }
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.bindTexture(gl.TEXTURE_2D, up.tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, low);
+  gl.uniform2f(up.loc.texel, 1 / rw, 1 / rh);
+  gl.uniform1f(up.loc.amount, amount);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.filter = 'none';
+  ctx.drawImage(up.canvas, 0, 0);
+  return true;
+}
+
 function present() {
   // Strength fades as a frozen/still image converges; while time runs the temporal window stays short, so keep it full.
   const frozen = state.paused || state.quality === 'photo';
@@ -193,8 +275,14 @@ function present() {
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
   ctx.filter = 'none';
-  ctx.drawImage(low, 0, 0, canvas.width, canvas.height);
-  if (state.bloom) {                                       // cheap glow pass for neon and sun
+  // Sharpen harder the more the frame is stretched; skip when nearly 1:1 or once the image has converged.
+  const stretch = canvas.width / rw;
+  const settled = frozen && accumN > 8;
+  const amount = Math.min(1.2, 0.35 * (stretch - 1) + 0.25);
+  if (!(state.upscale && stretch > 1.08 && !settled && drawUpscaled(amount))) {
+    ctx.drawImage(low, 0, 0, canvas.width, canvas.height);
+  }
+  if (state.bloom) {                                    // cheap glow pass for neon and sun
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = 0.16;
     ctx.filter = `blur(${Math.round(canvas.width / 90)}px) brightness(1.15) contrast(1.6)`;
@@ -374,6 +462,7 @@ function wireUI() {
   $('shadows').onchange = (e) => { state.shadows = e.target.checked; };
   $('bloom').onchange = (e) => { state.bloom = e.target.checked; };
   $('denoise').onchange = (e) => { state.denoise = e.target.checked; };
+  $('upscale').onchange = (e) => { state.upscale = e.target.checked; };
   $('pause').onchange = (e) => { state.paused = e.target.checked; };
   $('tour').onclick = toggleTour;
   $('drone').onclick = toggleDrone;

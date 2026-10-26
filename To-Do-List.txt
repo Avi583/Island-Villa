@@ -54,9 +54,10 @@ STATUS KEY
 2. KNOWN ISSUES - NOT YET FIXED
 ---------------------------------------------------------------------
 [ ] Image is very soft/blocky while moving on slow CPUs.
-    Auto-resolution can drop to ~18% scale. Ideas: raise the minimum scale,
-    turn global illumination fully off while moving, or add a cheap
-    edge-aware upscale/sharpen pass when presenting the frame.
+    Auto-resolution can drop to ~18% scale. A WebGL edge-aware upscale/sharpen
+    pass ("Sharp upscale" toggle) now runs when presenting the frame, but it
+    has not been checked in a real browser. If still too soft, consider
+    raising the minimum scale or turning global illumination off while moving.
 
 [ ] Daytime glass is slightly grainy until the camera stops.
     Comes from soft-shadow and bounce-light sampling on the interior seen
