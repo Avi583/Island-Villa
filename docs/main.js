@@ -366,6 +366,8 @@ for (let k = 0; k < 6; k++) { const a = (30 + 60 * k) * DEG; CIRCLES.push([15.5 
 for (let k = 0; k < 8; k++) { const a = (22.5 + 45 * k) * DEG; CIRCLES.push([13.8 * Math.cos(a), 13.8 * Math.sin(a), 0.3]); }
 const HOUSE = { x0: -8.45, x1: 8.3, z0: -6.45, z1: 6.3 };   // glass walls + body radius
 
+const POOL = { x0: -7.9, x1: 7.9, z0: 8.5, z1: 12.1 };      // water edge + body radius
+
 function collide(p, prev) {
   if (state.drone) {
     const r = Math.hypot(p.x, p.z);
@@ -375,6 +377,11 @@ function collide(p, prev) {
   for (const [cx, cz, r] of CIRCLES) {
     const dx = p.x - cx, dz = p.z - cz, d = Math.hypot(dx, dz);
     if (d < r && d > 1e-6) { p.x = cx + dx / d * r; p.z = cz + dz / d * r; }
+  }
+  if (p.x > POOL.x0 && p.x < POOL.x1 && p.z > POOL.z0 && p.z < POOL.z1) {            // don't walk into the pool
+    const pen = [p.x - POOL.x0, POOL.x1 - p.x, p.z - POOL.z0, POOL.z1 - p.z];
+    const i = pen.indexOf(Math.min(...pen));
+    if (i === 0) p.x = POOL.x0; else if (i === 1) p.x = POOL.x1; else if (i === 2) p.z = POOL.z0; else p.z = POOL.z1;
   }
   if (p.x > HOUSE.x0 && p.x < HOUSE.x1 && p.z > HOUSE.z0 && p.z < HOUSE.z1) {
     const pen = [p.x - HOUSE.x0, HOUSE.x1 - p.x, p.z - HOUSE.z0, HOUSE.z1 - p.z];

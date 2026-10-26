@@ -20,9 +20,15 @@ struct Prim { V3 a, b; i32 type, axis, mat, pad; };
 //  sphere:   a = centre, b.x = radius
 //  cylinder: a = centre, b.x = radius, b.y = half height, axis = 0|1|2
 
+// Rectangular opening cut through the island's top cap (the sunken pool). Empty by default.
+struct HoleRect { float x0, z0, x1, z1; };
+inline HoleRect g_hole = {0.f, 0.f, 0.f, 0.f};
+RT_INLINE bool inHole(float x, float z) { return x > g_hole.x0 && x < g_hole.x1 && z > g_hole.z0 && z < g_hole.z1; }
+
 RT_INLINE Prim mkBox(V3 mn, V3 mx, i32 mat) { Prim p; p.a = mn; p.b = mx; p.type = P_BOX; p.axis = 0; p.mat = mat; p.pad = 0; return p; }
 RT_INLINE Prim mkSphere(V3 c, float r, i32 mat) { Prim p; p.a = c; p.b = V3(r, 0.f, 0.f); p.type = P_SPHERE; p.axis = 0; p.mat = mat; p.pad = 0; return p; }
 RT_INLINE Prim mkCyl(V3 c, float r, float halfH, i32 axis, i32 mat) { Prim p; p.a = c; p.b = V3(r, halfH, 0.f); p.type = P_CYL; p.axis = axis; p.mat = mat; p.pad = 0; return p; }
+//  a cylinder with pad = 1 (axis 1) has its top cap opened wherever g_hole covers it
 
 RT_INLINE V3 axisVec(i32 axis, float s) { return axis == 0 ? V3(s, 0.f, 0.f) : (axis == 1 ? V3(0.f, s, 0.f) : V3(0.f, 0.f, s)); }
 
@@ -96,7 +102,8 @@ RT_INLINE bool hitCyl(const Prim& p, const Ray& r, float tmax, float& tOut, V3& 
       float t = (cap - ow) / dw;
       if (t > EPS && t < best) {
         float pu = ou + t * du, pv = ov + t * dv;
-        if (pu * pu + pv * pv <= R * R) { best = t; found = true; nu = 0.f; nv = 0.f; nw = k == 0 ? 1.f : -1.f; }
+        bool open = p.pad && k == 0 && inHole(r.o.x + r.d.x * t, r.o.z + r.d.z * t);   // pool opening
+        if (!open && pu * pu + pv * pv <= R * R) { best = t; found = true; nu = 0.f; nv = 0.f; nw = k == 0 ? 1.f : -1.f; }
       }
     }
   }

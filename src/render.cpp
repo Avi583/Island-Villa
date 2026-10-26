@@ -188,8 +188,10 @@ static V3 texAlbedo(const Material& m, V3 p, V3 n) {
       return c;
     }
     case T_POOL: {
-      if (gridLine(p.x * 5.f, 0.06f) + gridLine(p.z * 5.f, 0.06f) > 0.f) return V3(0.85f, 0.88f, 0.88f);
-      return m.albedo * (0.88f + 0.14f * hash2((i32)ffloor(p.x * 5.f), (i32)ffloor(p.z * 5.f)));
+      float u = fabsx(n.y) > 0.5f ? p.x : (fabsx(n.x) > 0.5f ? p.z : p.x);   // walls tile in (horizontal, y)
+      float v = fabsx(n.y) > 0.5f ? p.z : p.y;
+      if (gridLine(u * 5.f, 0.06f) + gridLine(v * 5.f, 0.06f) > 0.f) return V3(0.85f, 0.88f, 0.88f);
+      return m.albedo * (0.88f + 0.14f * hash2((i32)ffloor(u * 5.f), (i32)ffloor(v * 5.f)));
     }
     case T_SAND: {
       float f = fbm(p.x * 0.35f, p.z * 0.35f);

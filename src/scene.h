@@ -40,6 +40,7 @@ constexpr i32   MAX_LIGHTS  = 40;
 constexpr float ISLAND_R    = 24.f;
 constexpr float ISLAND_TOP  = 0.5f;
 constexpr float LAKE_Y      = 0.f;
+constexpr float POOL_DEPTH  = 2.5f;     // water depth below the deck (top y = 0.8)
 constexpr float LAKE_BOTTOM = -3.f;
 constexpr float ROAD_IN     = 17.5f;
 constexpr float ROAD_OUT    = 21.5f;

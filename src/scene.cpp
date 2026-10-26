@@ -59,7 +59,7 @@ static void buildMaterials() {
   defMat(M_STEEL,    K_METAL,   V3(0.62f, 0.63f, 0.65f),      1.f,  0.18f);
   defMat(M_CHROME,   K_METAL,   V3(0.92f, 0.92f, 0.94f),      1.f,  0.015f);
   defMat(M_LAKE,     K_WATER,   V3(1.f),                      0.02f, 0.f, T_NONE, V3(0.f), V3(0.45f, 0.13f, 0.10f));
-  defMat(M_POOL,     K_WATER,   V3(1.f),                      0.02f, 0.f, T_NONE, V3(0.f), V3(0.30f, 0.055f, 0.035f));
+  defMat(M_POOL,     K_WATER,   V3(1.f),                      0.02f, 0.f, T_NONE, V3(0.f), V3(0.42f, 0.07f, 0.04f));
   defMat(M_POOLTILE, K_DIFFUSE, V3(0.55f, 0.82f, 0.86f),      0.04f, 0.f, T_POOL);
   defMat(M_NEON_CYAN,    K_EMIT, V3(0.f), 0.f, 0.f, T_NONE, V3(0.35f, 3.6f, 5.0f));
   defMat(M_NEON_MAGENTA, K_EMIT, V3(0.f), 0.f, 0.f, T_NONE, V3(5.0f, 0.5f, 3.4f));
@@ -125,15 +125,22 @@ static void buildHouse() {
   B(-10.2f, 7.54f, 7.2f, 0.2f, 7.6f, 7.27f, M_NEON_MAGENTA);
   B(0.2f, 7.54f, -7.2f, 0.27f, 7.6f, 7.2f, M_NEON_MAGENTA);
 
-  // Outdoor pool at floor level: a deck continuing the ground-floor slab (top y = 0.8),
-  // with a tiled floor and a water volume whose sides act as the glass walls
-  // Four slabs frame the opening; the tiled floor sits just below the deck and the water is flush with it.
-  B(-5.f,  0.5f, 6.f,   5.f,  0.8f, 8.6f,  M_CONCRETE);
-  B(-5.f,  0.5f, 12.2f, 5.f,  0.8f, 13.f,  M_CONCRETE);
-  B(-5.f,  0.5f, 8.6f,  -3.8f, 0.8f, 12.2f, M_CONCRETE);
-  B(3.8f,  0.5f, 8.6f,  5.f,  0.8f, 12.2f, M_CONCRETE);
-  B(-3.8f, 0.5f, 8.6f,  3.8f, 0.55f, 12.2f, M_POOLTILE);
-  B(-3.8f, 0.55f, 8.6f, 3.8f, 0.8f, 12.2f, M_POOL);
+  // Outdoor lap pool running the length of the house. A deck continues the ground-floor slab
+  // (top y = 0.8); the pool is sunk POOL_DEPTH below the deck through an opening in the island
+  // cap (g_hole), lined with tile walls and floor, and filled with a water volume flush with the deck.
+  const float PX = 7.6f, PZ0 = 8.8f, PZ1 = 11.8f;            // water footprint: x -PX…PX, z PZ0…PZ1
+  const float FLOOR = 0.8f - POOL_DEPTH;                     // tiled floor top
+  g_hole = {-PX, PZ0, PX, PZ1};
+  B(-8.6f, 0.5f, 6.f,   8.6f, 0.8f, PZ0 - 0.6f, M_CONCRETE);  // deck: four slabs around the opening
+  B(-8.6f, 0.5f, PZ1 + 0.6f, 8.6f, 0.8f, 12.4f, M_CONCRETE);
+  B(-8.6f, 0.5f, PZ0 - 0.6f, -PX, 0.8f, PZ1 + 0.6f, M_CONCRETE);
+  B(PX,    0.5f, PZ0 - 0.6f, 8.6f, 0.8f, PZ1 + 0.6f, M_CONCRETE);
+  B(-PX - 0.2f, FLOOR - 0.1f, PZ0 - 0.2f, PX + 0.2f, FLOOR, PZ1 + 0.2f, M_POOLTILE);               // floor
+  B(-PX - 0.2f, FLOOR, PZ0 - 0.2f, -PX, 0.5f, PZ1 + 0.2f, M_POOLTILE);                             // walls
+  B(PX,         FLOOR, PZ0 - 0.2f,  PX + 0.2f, 0.5f, PZ1 + 0.2f, M_POOLTILE);
+  B(-PX, FLOOR, PZ0 - 0.2f, PX, 0.5f, PZ0, M_POOLTILE);
+  B(-PX, FLOOR, PZ1,        PX, 0.5f, PZ1 + 0.2f, M_POOLTILE);
+  B(-PX, FLOOR, PZ0, PX, 0.8f, PZ1, M_POOL);
 }
 
 // ── palm trees: tall curved tapered trunk, ringed bulges, drooping fronds, coconut cluster ──
@@ -182,6 +189,7 @@ static void buildTree(float x, float z, u32 seed) {
 // ── island landscaping, dock ─────────────────────────────────────────────────
 static void buildGrounds() {
   C(0.f, -1.5f, 0.f, ISLAND_R, 2.0f, 1, M_ISLAND);          // island disc: y -3.5 … 0.5
+  g_bvh.prims[g_bvh.primCount - 1].pad = 1;                 // its top cap is open over the pool
 
   for (int k = 0; k < 6; ++k) {                             // trees between path and road
     float a = (30.f + 60.f * k) * (PI / 180.f);
@@ -212,7 +220,7 @@ static void buildLights() {
   L(6.2f, 3.7f, 2.f,  V3(0.25f, 1.7f, 2.3f), 5.f);
   L(6.2f, 3.7f, -4.f, V3(0.25f, 1.7f, 2.3f), 5.f);
   L(-5.f, 7.2f, 7.4f, V3(2.2f, 0.25f, 1.5f), 4.f);          // roof magenta
-  L(0.f, 1.1f, 10.4f, V3(0.3f, 1.3f, 1.7f), 4.5f);          // pool light
+  for (float x = -5.f; x <= 5.1f; x += 5.f) L(x, 0.4f, 10.3f, V3(0.3f, 1.3f, 1.7f), 4.5f);   // pool lights
   L(-5.f, 8.35f, 0.f, V3(2.5f, 1.8f, 1.0f), 5.f);           // dome orb
 }
 
@@ -311,7 +319,9 @@ bool intersectScene(const Ray& r, float tmax, Hit& h) {
   bool hit = g_bvh.traverse<false>(r, h, nullptr);
   if (r.d.y != 0.f) {                                 // infinite lake surface and bed
     float t = (LAKE_Y - r.o.y) / r.d.y;
-    if (t > EPS && t < h.t) { h.t = t; h.n = V3(0.f, 1.f, 0.f); h.mat = M_LAKE; h.obj = -1; hit = true; }
+    if (t > EPS && t < h.t && !inHole(r.o.x + r.d.x * t, r.o.z + r.d.z * t)) {   // not inside the pool
+      h.t = t; h.n = V3(0.f, 1.f, 0.f); h.mat = M_LAKE; h.obj = -1; hit = true;
+    }
     t = (LAKE_BOTTOM - r.o.y) / r.d.y;
     if (t > EPS && t < h.t) { h.t = t; h.n = V3(0.f, 1.f, 0.f); h.mat = M_SAND; h.obj = -1; hit = true; }
   }
