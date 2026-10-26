@@ -220,9 +220,12 @@ static void buildLights() {
 static void buildCarTemplate() {
   g_carPartCount = 0;
   carPart(mkBox(V3(-2.2f, 0.30f, -0.95f), V3(2.2f, 0.85f, 0.95f), M_CARPAINT));     // body
-  carPart(mkBox(V3(0.9f, 0.85f, -0.9f),  V3(2.15f, 0.93f, 0.9f), M_CARPAINT));      // hood
-  carPart(mkBox(V3(-1.3f, 0.85f, -0.82f), V3(0.9f, 1.36f, 0.82f), M_CARGLASS));     // glass canopy
-  carPart(mkBox(V3(-1.1f, 1.36f, -0.7f), V3(0.6f, 1.40f, 0.7f), M_CARPAINT));       // roof strip
+  carPart(mkBox(V3(0.95f, 0.85f, -0.9f), V3(2.15f, 0.92f, 0.9f), M_CARPAINT));      // hood
+  carPart(mkBox(V3(-2.15f, 0.85f, -0.9f), V3(-1.5f, 0.97f, 0.9f), M_CARPAINT));     // trunk deck
+  // cabin: two glass steps give a raked windscreen and rear window instead of a box
+  carPart(mkBox(V3(-1.5f, 0.85f, -0.82f), V3(0.95f, 1.12f, 0.82f), M_CARGLASS));    // lower glass
+  carPart(mkBox(V3(-1.15f, 1.12f, -0.76f), V3(0.55f, 1.36f, 0.76f), M_CARGLASS));   // upper glass
+  carPart(mkBox(V3(-0.95f, 1.36f, -0.7f), V3(0.3f, 1.41f, 0.7f), M_CARPAINT));      // roof
   for (int i = 0; i < 4; ++i) {
     float x = (i & 1) ? 1.4f : -1.4f, z = (i & 2) ? 0.85f : -0.85f;
     carPart(mkCyl(V3(x, 0.38f, z), 0.38f, 0.16f, 2, M_RUBBER));                     // tyre
