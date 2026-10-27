@@ -58,7 +58,7 @@ the image sharpens as samples accumulate.
 FILES
 ---------------------------------------------------------------------
 src/mathx.h        Freestanding math, vectors, random numbers, sampling
-src/geometry.h     Rays, primitives, intersection, SAH BVH
+src/geometry.h     Rays, primitives, intersection, SAH BVH (SIMD 4-wide)
 src/scene.h        Material, light and scene declarations
 src/scene.cpp      The house, island, dock, trees, lamps and animated cars
 src/render.cpp     Sky, textures, water, lighting, tracer, tone mapping,

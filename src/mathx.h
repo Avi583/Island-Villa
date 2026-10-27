@@ -107,6 +107,16 @@ RT_INLINE V3 exp3(V3 a)          { return V3(fexp(a.x), fexp(a.y), fexp(a.z)); }
 RT_INLINE V3 reflect(V3 d, V3 n) { return d - n * (2.f * dot(d, n)); }
 RT_INLINE float luminance(V3 c)  { return 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z; }
 
+// ── 4-wide SIMD (clang vector extensions → WASM simd128, no headers) ─────────
+typedef float F4 __attribute__((vector_size(16)));
+typedef i32   I4 __attribute__((vector_size(16)));   // comparisons yield lanes of 0 / -1
+
+RT_INLINE F4 splat4(float s) { return F4{s, s, s, s}; }
+RT_INLINE F4 sel4(I4 m, F4 a, F4 b) { return (F4)((m & (I4)a) | (~m & (I4)b)); }
+// Same operand order and NaN behaviour as fminx / fmaxx, lane by lane.
+RT_INLINE F4 vmin4(F4 a, F4 b) { return sel4(a < b, a, b); }
+RT_INLINE F4 vmax4(F4 a, F4 b) { return sel4(a > b, a, b); }
+
 // Snell refraction. n faces the incoming ray; eta = n1/n2. false on total internal reflection.
 RT_INLINE bool refract(V3 d, V3 n, float eta, V3& out) {
   float cosi = -dot(n, d);

@@ -113,14 +113,12 @@ Ray tracer (C++)
 
 (3l done - see 5w.)
 
-3m. [ ] BVH leaves read primitives through idx[].
-    Reorder prims[] into BVH order after build() so leaf loops read
-    contiguous memory without the index indirection.
+(3m and 3n done - see 5x.)
 
-3n. [ ] Rays are traced one at a time despite -msimd128.
-    The build enables WASM SIMD but V3 math is scalar. Packet tracing
-    (4 rays per SIMD lane group) or SIMD slab tests in hitAABB would be the
-    largest single speed-up for the tracer, but is a big change.
+3o. [ ] Ray packets for primary rays.
+    BVH4 (5x) uses SIMD across 4 child boxes for one ray. Tracing 2x2
+    camera rays as a packet could add more speed for the first bounce,
+    but shading is recursive per ray, so it means restructuring rt_render.
 
 
 4. OPTIONAL - SKIPPED AT YOUR REQUEST
@@ -181,3 +179,10 @@ Ray tracer (C++)
 5w. [x] (3l) Gamma now uses a 4096-entry lookup table (linearly interpolated)
     built in rt_init() instead of 3 pow calls per pixel. wasm rebuilt cleanly;
     not yet viewed in a browser and fps not measured.
+5x. [x] (3m, 3n) The binary SAH BVH is collapsed into a 4-wide BVH (BVH4)
+    whose child boxes are tested with one WASM SIMD slab test, and prims[]
+    is reordered into leaf order (no idx[] lookup). Node.js benchmark,
+    640x360, 3 views: ~560-680 ms -> ~400 ms (~30-40% faster). Pixels
+    match the old build except 15 isolated ones out of 691,200, all on
+    reflective or glass surfaces; most likely equal-distance ties now
+    resolved in a different order. Not yet viewed in a browser.

@@ -121,16 +121,24 @@ RT_INLINE bool hitPrim(const Prim& p, const Ray& r, float tmax, float& t, V3& n)
   }
 }
 
-// Ray vs AABB slab test used by BVH traversal.
-RT_INLINE bool hitAABB(const Ray& r, V3 mn, V3 mx, float tmax, float& tnear) {
-  float tx1 = (mn.x - r.o.x) * r.inv.x, tx2 = (mx.x - r.o.x) * r.inv.x;
-  float t0 = fminx(tx1, tx2), t1 = fmaxx(tx1, tx2);
-  float ty1 = (mn.y - r.o.y) * r.inv.y, ty2 = (mx.y - r.o.y) * r.inv.y;
-  t0 = fmaxx(t0, fminx(ty1, ty2)); t1 = fminx(t1, fmaxx(ty1, ty2));
-  float tz1 = (mn.z - r.o.z) * r.inv.z, tz2 = (mx.z - r.o.z) * r.inv.z;
-  t0 = fmaxx(t0, fminx(tz1, tz2)); t1 = fminx(t1, fmaxx(tz1, tz2));
+// ── BVH4 node: four child boxes stored per axis so one SIMD slab test covers all four ──
+struct BVH4Node {
+  F4 mnx, mny, mnz, mxx, mxy, mxz;
+  I4 child;   // inner: BVH4 node index; leaf: first primitive
+  I4 cnt;     // > 0 leaf primitive count, 0 inner node, -1 empty slot
+};
+
+// Ray (origin o, inverse direction iv, splatted) vs the four child boxes of a node.
+// Lane-for-lane the same arithmetic as a scalar slab test, so results match bit for bit.
+RT_INLINE I4 hitAABB4(const BVH4Node& nd, F4 ox, F4 oy, F4 oz, F4 ix, F4 iy, F4 iz, float tmax, F4& tnear) {
+  F4 tx1 = (nd.mnx - ox) * ix, tx2 = (nd.mxx - ox) * ix;
+  F4 t0 = vmin4(tx1, tx2), t1 = vmax4(tx1, tx2);
+  F4 ty1 = (nd.mny - oy) * iy, ty2 = (nd.mxy - oy) * iy;
+  t0 = vmax4(t0, vmin4(ty1, ty2)); t1 = vmin4(t1, vmax4(ty1, ty2));
+  F4 tz1 = (nd.mnz - oz) * iz, tz2 = (nd.mxz - oz) * iz;
+  t0 = vmax4(t0, vmin4(tz1, tz2)); t1 = vmin4(t1, vmax4(tz1, tz2));
   tnear = t0;
-  return t1 >= fmaxx(t0, 0.f) && t0 < tmax;
+  return (t1 >= vmax4(t0, splat4(0.f))) & (t0 < splat4(tmax)) & (nd.cnt >= 0);
 }
 
 RT_INLINE float halfArea(V3 mn, V3 mx) {
@@ -139,17 +147,19 @@ RT_INLINE float halfArea(V3 mn, V3 mx) {
 }
 
 // ── BVH (binned surface-area heuristic) ──────────────────────────────────────
+// Built as a binary tree, then collapsed into a 4-wide tree (BVH4) for traversal.
 struct BVHNode { V3 mn; i32 leftFirst; V3 mx; i32 count; };   // count > 0 → leaf
 
 template <int MAXP>
 struct BVH {
-  Prim    prims[MAXP];
-  i32     idx[MAXP];
-  V3      cent[MAXP];
-  BVHNode nodes[2 * MAXP];
-  i32     primCount, nodeCount;
+  Prim     prims[MAXP];       // reordered into leaf order by build()
+  i32      idx[MAXP];
+  V3       cent[MAXP];
+  BVHNode  nodes[2 * MAXP];   // binary tree (build scratch)
+  BVH4Node nodes4[MAXP];
+  i32      primCount, nodeCount, node4Count;
 
-  void clear() { primCount = 0; nodeCount = 0; }
+  void clear() { primCount = 0; nodeCount = 0; node4Count = 0; }
   i32 add(const Prim& p) { if (primCount >= MAXP) return -1; prims[primCount] = p; return primCount++; }
 
   void build() {
@@ -162,6 +172,63 @@ struct BVH {
     nodes[0].leftFirst = 0; nodes[0].count = primCount;
     fitBounds(0);
     subdivide(0);
+    reorder();
+    node4Count = 0;
+    if (nodes[0].count) {                             // whole scene in one leaf
+      BVH4Node& n4 = nodes4[node4Count++];
+      n4.cnt = I4{-1, -1, -1, -1};
+      setLane(n4, 0, 0);
+    } else {
+      collapse(0);
+    }
+  }
+
+  // Permute prims[] into idx[] order (cycle by cycle, in place) so leaves read contiguous memory.
+  void reorder() {
+    for (i32 i = 0; i < primCount; ++i) {
+      Prim t = prims[i];
+      i32 j = i;
+      for (;;) {
+        i32 k = idx[j]; idx[j] = j;
+        if (k == i) break;
+        prims[j] = prims[k]; j = k;
+      }
+      prims[j] = t;
+    }
+  }
+
+  // Copy binary node bi's box into lane k; leaves point straight at their primitives.
+  void setLane(BVH4Node& n4, i32 k, i32 bi) {
+    const BVHNode& b = nodes[bi];
+    n4.mnx[k] = b.mn.x; n4.mny[k] = b.mn.y; n4.mnz[k] = b.mn.z;
+    n4.mxx[k] = b.mx.x; n4.mxy[k] = b.mx.y; n4.mxz[k] = b.mx.z;
+    n4.child[k] = b.leftFirst; n4.cnt[k] = b.count;
+  }
+
+  // Binary inner node bi → one BVH4 node: open the largest inner child until there are four.
+  i32 collapse(i32 bi) {
+    i32 ch[4]; i32 n = 2;
+    ch[0] = nodes[bi].leftFirst; ch[1] = ch[0] + 1;
+    while (n < 4) {
+      i32 best = -1; float bestA = -1.f;
+      for (i32 k = 0; k < n; ++k) {
+        const BVHNode& c = nodes[ch[k]];
+        float a = halfArea(c.mn, c.mx);
+        if (c.count == 0 && a > bestA) { bestA = a; best = k; }
+      }
+      if (best < 0) break;
+      i32 c = nodes[ch[best]].leftFirst;
+      ch[best] = c; ch[n++] = c + 1;
+    }
+    i32 ni = node4Count++;
+    BVH4Node& n4 = nodes4[ni];
+    n4.mnx = n4.mny = n4.mnz = n4.mxx = n4.mxy = n4.mxz = splat4(0.f);
+    n4.child = I4{0, 0, 0, 0}; n4.cnt = I4{-1, -1, -1, -1};
+    for (i32 k = 0; k < n; ++k) {
+      setLane(n4, k, ch[k]);
+      if (nodes[ch[k]].count == 0) { i32 c = collapse(ch[k]); nodes4[ni].child[k] = c; }
+    }
+    return ni;
   }
 
   void fitBounds(i32 ni) {
@@ -236,15 +303,18 @@ struct BVH {
   template <bool ANY>
   bool traverse(const Ray& r, Hit& h, const unsigned char* skip) const {
     if (primCount == 0) return false;
-    i32 stack[64]; i32 sp = 0; stack[sp++] = 0;
+    const F4 ox = splat4(r.o.x), oy = splat4(r.o.y), oz = splat4(r.o.z);
+    const F4 ix = splat4(r.inv.x), iy = splat4(r.inv.y), iz = splat4(r.inv.z);
+    struct Entry { float t; i32 child, cnt; };        // a child box that passed its slab test
+    Entry stack[96]; i32 sp = 0;
+    stack[sp++] = Entry{-INF, 0, 0};
     bool found = false;
     while (sp) {
-      const BVHNode& nd = nodes[stack[--sp]];
-      float tn;
-      if (!hitAABB(r, nd.mn, nd.mx, h.t, tn)) continue;
-      if (nd.count) {
-        for (i32 k = 0; k < nd.count; ++k) {
-          const Prim& p = prims[idx[nd.leftFirst + k]];
+      const Entry e = stack[--sp];
+      if (e.t >= h.t) continue;                       // a closer hit was found since it was pushed
+      if (e.cnt) {
+        for (i32 k = 0; k < e.cnt; ++k) {
+          const Prim& p = prims[e.child + k];
           if (ANY && skip[p.mat]) continue;
           float t; V3 n;
           if (hitPrim(p, r, h.t, t, n)) {
@@ -252,17 +322,20 @@ struct BVH {
             if (ANY) return true;
           }
         }
-      } else {
-        i32 l = nd.leftFirst, rr = l + 1;
-        float tl, tr;
-        bool hl = hitAABB(r, nodes[l].mn, nodes[l].mx, h.t, tl);
-        bool hr = hitAABB(r, nodes[rr].mn, nodes[rr].mx, h.t, tr);
-        if (hl && hr) {                               // visit nearer child first
-          if (tl < tr) { stack[sp++] = rr; stack[sp++] = l; }
-          else         { stack[sp++] = l;  stack[sp++] = rr; }
-        } else if (hl) stack[sp++] = l;
-        else if (hr)   stack[sp++] = rr;
+        continue;
       }
+      const BVH4Node& nd = nodes4[e.child];
+      F4 tn;
+      I4 m = hitAABB4(nd, ox, oy, oz, ix, iy, iz, h.t, tn);
+      Entry hit[4]; i32 nh = 0;
+      for (i32 k = 0; k < 4; ++k) {
+        if (!m[k]) continue;
+        Entry c{tn[k], nd.child[k], nd.cnt[k]};
+        i32 j = nh++;
+        if (!ANY) for (; j > 0 && hit[j - 1].t < c.t; --j) hit[j] = hit[j - 1];   // sort far → near
+        hit[j] = c;
+      }
+      for (i32 k = 0; k < nh; ++k) stack[sp++] = hit[k];   // nearest ends up on top
     }
     return found;
   }
