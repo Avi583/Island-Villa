@@ -111,9 +111,7 @@ Ray tracer (C++)
     transmission stochastically by F (weighted), or skip the reflection
     when F * throughput is tiny.
 
-3l. [ ] Tone mapping uses pow per channel.
-    toSRGB8() calls fpow(x, 1/2.2) three times per pixel. A 4096-entry
-    lookup table built once in rt_init() is cheaper.
+(3l done - see 5w.)
 
 3m. [ ] BVH leaves read primitives through idx[].
     Reorder prims[] into BVH order after build() so leaf loops read
@@ -180,3 +178,6 @@ Ray tracer (C++)
     copy, added in the upscale shader. The CSS-filter bloom remains only in
     the no-WebGL fallback. Still uniform, not thresholded (see 2d). Not yet
     run in a browser; check the glow strength against the old look.
+5w. [x] (3l) Gamma now uses a 4096-entry lookup table (linearly interpolated)
+    built in rt_init() instead of 3 pow calls per pixel. wasm rebuilt cleanly;
+    not yet viewed in a browser and fps not measured.
