@@ -89,24 +89,7 @@ STATUS KEY
 none measured yet. Re-check fps on real hardware after each change.)
 
 Frame pipeline (main.js / worker.js)
-3a. [~] Extra copies when presenting through WebGL.
-    PARTLY FIXED: the frame is now uploaded directly from its ImageData
-    (no putImageData, no canvas readback). Still left: the WebGL canvas is
-    drawImage'd into the visible 2D canvas.
-    Original note:
-    Each frame: putImageData into the low canvas, texImage2D FROM that
-    canvas (may force a GPU readback), draw to an offscreen WebGL canvas,
-    then drawImage that into the visible 2D canvas. Upload img.data
-    directly with texImage2D(..., RGBA, UNSIGNED_BYTE, Uint8Array) and skip
-    putImageData when the GPU path is used. Better still, make the visible
-    canvas the WebGL canvas (needs preserveDrawingBuffer or a render before
-    toBlob for the Screenshot button).
-
-3b. [ ] Bloom blurs at full canvas resolution.
-    ctx.filter = blur(canvas.width/90 px) on a full-size drawImage is
-    expensive, and in Firefox/Safari it may run on the CPU. Blur a small
-    (e.g. 1/4 size) copy and scale it up, or do bloom in the WebGL pass
-    (which would also allow the thresholded bloom listed in 2d).
+(3a and 3b done - see 5u and 5v.)
 
 Ray tracer (C++)
 3g. [ ] Island cylinder is inside the BVH.
@@ -190,3 +173,10 @@ Ray tracer (C++)
     not measured; compare on real hardware (see 1a).
 5t. [x] (3f) Panel backdrop-filter removed; background made more opaque
     (0.62 -> 0.8 alpha). Not yet viewed in a browser.
+5u. [x] (3a) The visible #view canvas is now the WebGL canvas (no drawImage
+    copy; preserveDrawingBuffer keeps Screenshot working). A 2D context is
+    only created when WebGL is unavailable. Not yet run in a browser.
+5v. [x] (3b) Bloom runs in the WebGL pass: 9-tap separable blur on a 1/4-size
+    copy, added in the upscale shader. The CSS-filter bloom remains only in
+    the no-WebGL fallback. Still uniform, not thresholded (see 2d). Not yet
+    run in a browser; check the glow strength against the old look.
