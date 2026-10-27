@@ -37,7 +37,7 @@ const PRESETS = {
 };
 
 // ── worker pool ─────────────────────────────────────────────────────────────
-const threads = Math.max(2, Math.min(16, navigator.hardwareConcurrency || 4));
+const threads = Math.max(2, Math.min(16, (navigator.hardwareConcurrency || 4) - 1));   // leave a core for the main thread
 const workers = [];
 let ready = 0;
 
@@ -83,6 +83,10 @@ let bufs = [], filling = null, latest = null, rw = 0, rh = 0;
 let dimg = null, dimg32 = null;                           // JS denoise output (no-WebGL fallback)
 let busy = false, pending = 0, frameNo = 0, dispatchT = 0, workerMs = 0, doneMs = 0;
 let accumN = 0, lastKey = '';
+const RES_STEP = 16;                                      // render width granularity (px)
+const RES_COOLDOWN = 8;                                   // frames between auto-resolution changes
+const MAX_SPP = 512;                                      // stop refining a frozen, still image after this many samples
+let adaptWait = 0;
 let fps = 0, lastDone = performance.now();
 
 function makeBuffer(w, h) {
@@ -93,7 +97,7 @@ function makeBuffer(w, h) {
 function renderSize() {
   const q = QUALITY[state.quality];
   const scale = state.quality === 'photo' ? 1 : state.scale;
-  let w = Math.max(160, Math.round(canvas.width * scale));
+  let w = Math.max(160, Math.round(canvas.width * scale / RES_STEP) * RES_STEP);   // snapped so small scale drifts don't reallocate
   w = Math.min(w, q.maxW);
   const h = Math.max(90, Math.round(w * canvas.height / canvas.width));
   return [w, h];
@@ -101,16 +105,17 @@ function renderSize() {
 
 function dispatch() {
   const [w, h] = renderSize();
+  const cam = [state.x, state.eye, state.z, state.yaw, state.pitch];
+  const timeFrozen = state.paused || state.quality === 'photo';
+  const key = cam.map((v) => v.toFixed(4)).join() + `|${w}x${h}|${state.sunElev}|${state.sunAz}|${state.exposure}|${state.shadows}|${state.quality}` +
+              (timeFrozen ? `|${state.time.toFixed(3)}` : '');
+  if (timeFrozen && key === lastKey && accumN >= MAX_SPP) return;   // converged: idle until the camera or settings change
   if (w !== rw || h !== rh) {
     rw = w; rh = h;
     bufs = [makeBuffer(w, h), makeBuffer(w, h)];          // `latest` keeps its old buffer until shown
     filling = bufs[0];
     accumN = 0;
   }
-  const cam = [state.x, state.eye, state.z, state.yaw, state.pitch];
-  const timeFrozen = state.paused || state.quality === 'photo';
-  const key = cam.map((v) => v.toFixed(4)).join() + `|${w}x${h}|${state.sunElev}|${state.sunAz}|${state.shadows}|${state.quality}` +
-              (timeFrozen ? `|${state.time.toFixed(3)}` : '');
   const still = key === lastKey;
   lastKey = key;
   accumN = still ? accumN + 1 : 1;
@@ -375,9 +380,12 @@ function present(f) {
 function adaptResolution(frameMs, n) {
   if (!state.autoRes || state.quality === 'photo' || n > 1) return;   // never resize mid-accumulation
   const target = QUALITY[state.quality].target;
+  if (adaptWait > 0) { adaptWait--; return; }
+  const before = state.scale;
   if (frameMs > target * 1.25) state.scale *= 0.92;
   else if (frameMs < target * 0.7) state.scale *= 1.04;
   state.scale = Math.min(1, Math.max(0.18, state.scale));
+  if (state.scale !== before) adaptWait = RES_COOLDOWN;
   $('res').value = Math.round(state.scale * 100);
 }
 

@@ -108,25 +108,6 @@ Frame pipeline (main.js / worker.js)
     (e.g. 1/4 size) copy and scale it up, or do bloom in the WebGL pass
     (which would also allow the thresholded bloom listed in 2d).
 
-3c. [ ] Auto-resolution changes the size almost every frame while adapting.
-    Every size change reallocates two ImageData buffers, resets each
-    worker's accumulator and resizes the low canvas. Snap the render width
-    to steps (e.g. multiples of 16 px) and add hysteresis.
-
-3d. [ ] No idle when the image has converged.
-    In Photo mode / frozen time with a still camera, frames keep rendering
-    forever. Stop dispatching after N samples (e.g. 512 spp) until the
-    camera or settings change, to save CPU and battery.
-
-3e. [ ] Worker count leaves no core for the main thread.
-    threads = hardwareConcurrency, but the main thread also does input,
-    denoise and presenting. Try hardwareConcurrency - 1 and compare fps.
-
-3f. [ ] Settings panel backdrop-filter.
-    The panel uses backdrop-filter: blur(14px) over a canvas that changes
-    every frame, so the compositor re-blurs it each frame. Minor GPU cost;
-    a solid translucent background would avoid it.
-
 Ray tracer (C++)
 3g. [ ] Island cylinder is inside the BVH.
     It is a 48 m wide primitive whose box covers the whole scene, so
@@ -200,3 +181,12 @@ Ray tracer (C++)
 5o. [x] Haze/fog only computed when fog > 0 (wasm rebuilt; fps not measured).
 5p. [x] Sky halo uses multiplies instead of pow (wasm rebuilt; fps not
     measured).
+5q. [x] (3c) Auto-resolution: render width snapped to 16 px steps, plus an
+    8-frame cooldown between scale changes. Not yet run in a browser.
+5r. [x] (3d) Rendering idles once a frozen (Photo/paused), still image reaches
+    512 samples; wakes on any camera/sun/exposure/quality change. Not yet run
+    in a browser.
+5s. [x] (3e) Worker count is now hardwareConcurrency - 1 (min 2). fps impact
+    not measured; compare on real hardware (see 1a).
+5t. [x] (3f) Panel backdrop-filter removed; background made more opaque
+    (0.62 -> 0.8 alpha). Not yet viewed in a browser.
