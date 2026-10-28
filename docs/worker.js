@@ -36,7 +36,8 @@ onmessage = async (e) => {
                  m.frame, m.blend, m.sunElev, m.sunAz, m.exposure, m.gi, m.shadows ? 1 : 0);
     // Copy out of WASM memory (it may be detached later by a memory.grow) and transfer.
     const out = new Uint32Array(ex.memory.buffer, ex.rt_out(), pixels).slice();
-    postMessage({ type: 'rows', index: rowStart, frame: m.frame, w, h, rows, buf: out.buffer,
-                  ms: performance.now() - t0 }, [out.buffer]);
+    const depth = new Float32Array(ex.memory.buffer, ex.rt_depth(), pixels).slice();
+    postMessage({ type: 'rows', index: rowStart, frame: m.frame, w, h, rows, buf: out.buffer, depth: depth.buffer,
+                  ms: performance.now() - t0 }, [out.buffer, depth.buffer]);
   }
 };

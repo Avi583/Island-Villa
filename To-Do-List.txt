@@ -1,6 +1,6 @@
 ISLAND VILLA - C++ RAY TRACER DEMO
 TO-DO LIST (unfixed and untested items)
-Last updated: Monday, October 26, 2026 (items numbered; completed items moved to Done and Verified)
+Last updated: Tuesday, October 27, 2026 (items numbered; completed items moved to Done and Verified)
 =====================================================================
 
 STATUS KEY
@@ -53,32 +53,22 @@ STATUS KEY
 
 2. KNOWN ISSUES - NOT YET FIXED
 ---------------------------------------------------------------------
-2a. [ ] Image is very soft/blocky while moving on slow CPUs.
-    Auto-resolution can drop to ~18% scale. A WebGL edge-aware upscale/sharpen
-    pass ("Sharp upscale" toggle) now runs when presenting the frame, but it
-    has not been checked in a real browser. If still too soft, consider
-    raising the minimum scale or turning global illumination off while moving.
+(2a and 2b done - see 5y and 5z.)
 
-2b. [ ] Daytime glass is slightly grainy until the camera stops.
-    Comes from soft-shadow and bounce-light sampling on the interior seen
-    through the glass. Converges when standing still (progressive
-    accumulation). A temporal reprojection pass would fix this while moving
-    but is a large change.
-
-2c. [ ] Chrome pillars sparkle slightly at night.
+2c. [ ] (SONNET) Chrome pillars sparkle slightly at night.
     Mirror reflections of tiny bright emitters. Minor; could clamp specular
     contribution or slightly increase chrome roughness.
 
-2d. [ ] Bloom is uniform, not thresholded.
+2d. [ ] (SONNET) Bloom is uniform, not thresholded.
     The glow pass blurs the whole frame (canvas filter), so bright sky also
     gets a soft haze. A proper bright-pass bloom would need to be computed in
     C++ or a second canvas.
 
-2e. [ ] Cars pass through the player and each other is never checked.
+2e. [ ] (SONNET) Cars pass through the player and each other is never checked.
     Cars follow fixed circular lanes at constant speed, so same-lane cars
     never collide, but the player is not blocked by cars.
 
-2g. [ ] Interior is simple.
+2g. [ ] (SONNET) Interior is simple.
     Ground floor has a kitchen island, sofa, table and light strips; upper
     floor is suggested only by the lit ribbon window.
 
@@ -92,19 +82,19 @@ Frame pipeline (main.js / worker.js)
 (3a and 3b done - see 5u and 5v.)
 
 Ray tracer (C++)
-3g. [ ] Island cylinder is inside the BVH.
+3g. [ ] (SONNET) Island cylinder is inside the BVH.
     It is a 48 m wide primitive whose box covers the whole scene, so
     whichever BVH node holds it is huge and nearly every ray descends into
     it. Intersect it analytically in intersectScene() like the lake plane.
     Also test the lake/sand planes BEFORE BVH traversal so the tighter
     tmax prunes BVH nodes behind the water.
 
-3h. [ ] BVH nodes are box-tested twice.
+3h. [ ] (SONNET) BVH nodes are box-tested twice.
     traverse() tests both children's boxes before pushing them, then tests
     the popped node's box again. Push the entry distance with the node and,
     on pop, skip it only if tnear >= h.t (no second slab test).
 
-3k. [ ] Glass and water always trace both reflection and transmission.
+3k. [ ] (OPUS) Glass and water always trace both reflection and transmission.
     Every front-facing glass hit at depth < 4 spawns a shadeReflection()
     (up to 4 more intersections + lighting) even though F is ~4.5% and
     the ray usually passes through 2+ panes. Pick reflection OR
@@ -115,7 +105,7 @@ Ray tracer (C++)
 
 (3m and 3n done - see 5x.)
 
-3o. [ ] Ray packets for primary rays.
+3o. [ ] (OPUS) Ray packets for primary rays.
     BVH4 (5x) uses SIMD across 4 child boxes for one ray. Tracing 2x2
     camera rays as a packet could add more speed for the first bounce,
     but shading is recursive per ray, so it means restructuring rt_render.
@@ -186,3 +176,23 @@ Ray tracer (C++)
     match the old build except 15 isolated ones out of 691,200, all on
     reflective or glass surfaces; most likely equal-distance ties now
     resolved in a different order. Not yet viewed in a browser.
+5y. [x] (2a) Soft/blocky image while moving on slow CPUs. Auto-resolution
+    floor raised from 18% to 30% scale (MIN_SCALE), render width never below
+    320 px (was 160) and height never below 180 px (was 90); the Render scale
+    slider now starts at 30. GI was already off while moving (Balanced
+    giMove = 0). Slow CPUs will now run slower than the 36 ms target instead
+    of dropping resolution further. JS only, no rebuild. Not yet run in a
+    browser; check fps and sharpness on a slow machine (see 1a).
+5z. [x] (2b) Grainy glass/interior while moving. New GPU temporal
+    reprojection pass (TAA) before the denoise: the C++ tracer writes a
+    per-pixel depth to the first non-glass surface (so the interior behind
+    the glass reprojects correctly), each pixel is projected into the last
+    shown camera, and the history there is clamped to the current 3x3
+    neighbourhood and blended in (1/8 new frame while moving). When the
+    camera stops, the WASM running average takes over within 8 frames.
+    Needs OES_texture_float; without it (or without WebGL) frames are shown
+    as before. wasm rebuilt. Headless Chrome (SwiftShader) A/B while walking:
+    the speckle on the interior behind the glass is gone; slight softening /
+    short trails on edges in motion. Not yet checked on real hardware; tune
+    TAA_ALPHA in main.js if ghosting shows (higher = less ghosting, more
+    noise).

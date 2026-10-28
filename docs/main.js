@@ -85,21 +85,24 @@ let busy = false, pending = 0, frameNo = 0, dispatchT = 0, workerMs = 0, doneMs 
 let accumN = 0, lastKey = '';
 const RES_STEP = 16;                                      // render width granularity (px)
 const RES_COOLDOWN = 8;                                   // frames between auto-resolution changes
+const MIN_SCALE = 0.3;                                    // auto-resolution floor; lower looks too blocky while moving
+const MIN_RENDER_W = 320;                                 // never render narrower than this (px)
 const MAX_SPP = 512;                                      // stop refining a frozen, still image after this many samples
 let adaptWait = 0;
 let fps = 0, lastDone = performance.now();
 
 function makeBuffer(w, h) {
   const img = new ImageData(w, h);
-  return { w, h, img, img32: new Uint32Array(img.data.buffer), accumN: 0, frozen: false };
+  return { w, h, img, img32: new Uint32Array(img.data.buffer), depth: new Float32Array(w * h), cam: null, fov: 0,
+           accumN: 0, frozen: false };
 }
 
 function renderSize() {
   const q = QUALITY[state.quality];
   const scale = state.quality === 'photo' ? 1 : state.scale;
-  let w = Math.max(160, Math.round(canvas.width * scale / RES_STEP) * RES_STEP);   // snapped so small scale drifts don't reallocate
+  let w = Math.max(MIN_RENDER_W, Math.round(canvas.width * scale / RES_STEP) * RES_STEP);   // snapped so small scale drifts don't reallocate
   w = Math.min(w, q.maxW);
-  const h = Math.max(90, Math.round(w * canvas.height / canvas.width));
+  const h = Math.max(180, Math.round(w * canvas.height / canvas.width));
   return [w, h];
 }
 
@@ -130,6 +133,8 @@ function dispatch() {
 
   filling.accumN = accumN;
   filling.frozen = timeFrozen;
+  filling.cam = cam;
+  filling.fov = state.fov;
   busy = true;
   pending = workers.length;
   dispatchT = performance.now();
@@ -145,10 +150,11 @@ function dispatch() {
 
 function receiveRows(m) {
   if (m.w === rw && m.h === rh) {
-    const src = new Uint32Array(m.buf);
+    const src = new Uint32Array(m.buf), dsrc = new Float32Array(m.depth);
     for (let i = 0; i < m.rows; i++) {
       const y = m.index + i * threads;
       filling.img32.set(src.subarray(i * m.w, (i + 1) * m.w), y * m.w);
+      filling.depth.set(dsrc.subarray(i * m.w, (i + 1) * m.w), y * m.w);
     }
   }
   workerMs = Math.max(workerMs, m.ms);
@@ -257,6 +263,34 @@ const GPU_UPSCALE_FS = `precision highp float;
     vec3 outc = clamp(base + (base - blur) * amount, lo, hi);
     gl_FragColor = vec4(min(outc + glow(), 1.0), 1.0);
   }`;
+// Temporal reprojection: each pixel's world point (camera ray × reprojection depth from the
+// C++ tracer, which looks through thin glass) is projected into the previously shown camera
+// and the history there is blended in, so noise keeps averaging out while the camera moves.
+// History is clamped to the current 3×3 neighbourhood: noisy areas (the interior behind the
+// glass) span a wide range and keep their history, clean edges a narrow one, which stops ghosting.
+const GPU_TAA_FS = `precision highp float;
+  varying vec2 uv; uniform sampler2D cur, hist, depth; uniform vec2 texel; uniform float alpha;
+  uniform vec3 camP, camF, camR, camU, prevP, prevF, prevR, prevU;   // R/U scaled to the image plane
+  float vig(vec2 q) { return 1.0 - 0.22 * (q.x * q.x * 0.6 + q.y * q.y); }   // same as rt_render
+  void main() {
+    vec3 c = texture2D(cur, uv).rgb;
+    vec2 q = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    vec3 d = camP + normalize(camF + camR * q.x + camU * q.y) * texture2D(depth, uv).r - prevP;
+    float z = dot(d, prevF);
+    vec2 pq = vec2(dot(d, prevR), dot(d, prevU)) / max(z, 1e-4);
+    vec2 puv = vec2(pq.x * 0.5 + 0.5, 0.5 - pq.y * 0.5);
+    if (alpha >= 1.0 || z <= 0.0 || puv != clamp(puv, 0.0, 1.0)) { gl_FragColor = vec4(c, 1.0); return; }
+    vec3 h = texture2D(hist, puv).rgb * pow(vig(q) / vig(pq), 1.0 / 2.2);   // vignette is baked into both frames
+    vec3 lo = c, hi = c;
+    for (int dy = -1; dy <= 1; dy++)
+      for (int dx = -1; dx <= 1; dx++) {
+        vec3 n = texture2D(cur, uv + vec2(float(dx), float(dy)) * texel).rgb;
+        lo = min(lo, n); hi = max(hi, n);
+      }
+    gl_FragColor = vec4(mix(clamp(h, lo, hi), c, alpha), 1.0);
+  }`;
+const TAA_ALPHA = 0.125;                                  // weight of the new frame while moving (~8-frame window)
+const TAA_SETTLE = 8;                                     // once still, WASM accumulation takes over within this many frames
 // One axis of a 9-tap gaussian (σ = 2 taps); `step` is the tap spacing in uv units.
 const GPU_BLUR_FS = `precision highp float;
   varying vec2 uv; uniform sampler2D tex; uniform vec2 step;
@@ -270,7 +304,8 @@ const GPU_BLUR_FS = `precision highp float;
     gl_FragColor = vec4(sum / sw, 1.0);
   }`;
 const gpu = { gl: null, failed: false, canvas: null, srcTex: null, fbo: null, fboTex: null, fw: 0, fh: 0, den: null, up: null,
-  blur: null, bloomTex: [null, null], bloomFbo: [null, null], bw: 0, bh: 0 };
+  blur: null, bloomTex: [null, null], bloomFbo: [null, null], bw: 0, bh: 0,
+  taa: null, depthTex: null, histTex: [null, null], histFbo: [null, null], hw: 0, hh: 0, hi: 0, prevCam: null };
 
 function initGPU() {
   gpu.canvas = canvas;                                    // render straight into the visible canvas
@@ -297,8 +332,11 @@ function initGPU() {
   gpu.up = program(GPU_VS_FLIP, GPU_UPSCALE_FS, ['tex', 'bloom', 'texel', 'amount', 'bloomAmt']);
   gpu.blur = program(GPU_VS, GPU_BLUR_FS, ['step']);
   if (!gpu.den || !gpu.up || !gpu.blur) return false;
+  // Temporal pass needs float textures for depth; without them frames are shown as rendered.
+  gpu.taa = gl.getExtension('OES_texture_float') &&
+            program(GPU_VS, GPU_TAA_FS, ['cur', 'hist', 'depth', 'texel', 'alpha', 'camP', 'camF', 'camR', 'camU', 'prevP', 'prevF', 'prevR', 'prevU']);
   canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
-  canvas.addEventListener('webglcontextrestored', () => { gpu.gl = null; gpu.fw = gpu.fh = gpu.bw = gpu.bh = 0; });
+  canvas.addEventListener('webglcontextrestored', () => { gpu.gl = null; gpu.fw = gpu.fh = gpu.bw = gpu.bh = gpu.hw = gpu.hh = 0; gpu.prevCam = null; });
   gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0);
@@ -316,8 +354,68 @@ function initGPU() {
   gpu.fboTex = texture();
   gpu.fbo = gl.createFramebuffer();
   for (let i = 0; i < 2; i++) { gpu.bloomTex[i] = texture(); gpu.bloomFbo[i] = gl.createFramebuffer(); }
+  for (let i = 0; i < 2; i++) { gpu.histTex[i] = texture(); gpu.histFbo[i] = gl.createFramebuffer(); }
+  gpu.depthTex = texture();
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);   // float textures can't be filtered in WebGL1
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   gpu.gl = gl;
   return true;
+}
+
+// Camera basis matching rt_render: forward, right and up, plus the image-plane half extents.
+function camBasis(cam, fov, aspect) {
+  const [x, y, z, yaw, pitch] = cam;
+  const cp = Math.cos(pitch), f = [cp * Math.cos(yaw), Math.sin(pitch), cp * Math.sin(yaw)];
+  const r = [-f[2] / cp, 0, f[0] / cp];                   // normalize(cross(f, +Y))
+  const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+  const th = Math.tan(fov / 2);
+  return { p: [x, y, z], f, r, u, sx: th * aspect, sy: th };
+}
+
+// Blends frame `f` (already uploaded to srcTex) with the reprojected history; returns the result texture.
+function temporal(f) {
+  const gl = gpu.gl, t = gpu.taa;
+  if (gpu.hw !== f.w || gpu.hh !== f.h) {
+    for (let i = 0; i < 2; i++) {
+      gl.bindTexture(gl.TEXTURE_2D, gpu.histTex[i]);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, f.w, f.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, gpu.histFbo[i]);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, gpu.histTex[i], 0);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gpu.taa = null;
+        return gpu.srcTex;
+      }
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gpu.hw = f.w; gpu.hh = f.h; gpu.prevCam = null;
+  }
+  const cur = camBasis(f.cam, f.fov, f.w / f.h), prev = gpu.prevCam;
+  gpu.prevCam = cur;
+  const alpha = prev ? Math.min(1, Math.max(TAA_ALPHA, f.accumN / TAA_SETTLE)) : 1;
+  const scaled = (v, k) => [v[0] * k, v[1] * k, v[2] * k];
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D, gpu.depthTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, f.w, f.h, 0, gl.LUMINANCE, gl.FLOAT, f.depth);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, gpu.histTex[gpu.hi]);    // last shown result
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, gpu.srcTex);
+  gpu.hi ^= 1;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, gpu.histFbo[gpu.hi]);
+  gl.viewport(0, 0, f.w, f.h);
+  gl.useProgram(t.prog);
+  gl.uniform1i(t.cur, 0); gl.uniform1i(t.hist, 1); gl.uniform1i(t.depth, 2);
+  gl.uniform2f(t.texel, 1 / f.w, 1 / f.h);
+  gl.uniform1f(t.alpha, alpha);
+  gl.uniform3fv(t.camP, cur.p); gl.uniform3fv(t.camF, cur.f);
+  gl.uniform3fv(t.camR, scaled(cur.r, cur.sx)); gl.uniform3fv(t.camU, scaled(cur.u, cur.sy));
+  const pv = prev || cur;
+  gl.uniform3fv(t.prevP, pv.p); gl.uniform3fv(t.prevF, pv.f);
+  gl.uniform3fv(t.prevR, scaled(pv.r, 1 / pv.sx)); gl.uniform3fv(t.prevU, scaled(pv.u, 1 / pv.sy));
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return gpu.histTex[gpu.hi];
 }
 
 // Draws frame `f` to the main canvas on the GPU (denoised when sigma > 0, sharpened when
@@ -327,7 +425,9 @@ function drawGPU(f, sigma, amount, bloom) {
   if (!gpu.gl && !initGPU()) { gpu.failed = true; return false; }
   const gl = gpu.gl;
   if (gl.isContextLost()) return true;                    // skip the frame; webglcontextrestored re-inits
-  let tex = gpu.srcTex;
+  gl.bindTexture(gl.TEXTURE_2D, gpu.srcTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, f.img);
+  let tex = gpu.taa ? temporal(f) : gpu.srcTex;
   if (sigma > 0) {
     if (gpu.fw !== f.w || gpu.fh !== f.h) {
       gl.bindTexture(gl.TEXTURE_2D, gpu.fboTex);
@@ -337,18 +437,15 @@ function drawGPU(f, sigma, amount, bloom) {
       if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) { gpu.failed = true; return false; }
       gpu.fw = f.w; gpu.fh = f.h;
     }
-    tex = gpu.fboTex;
-  }
-  gl.bindTexture(gl.TEXTURE_2D, gpu.srcTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, f.img);
-  if (sigma > 0) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, gpu.fbo);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.viewport(0, 0, f.w, f.h);
     gl.useProgram(gpu.den.prog);
     gl.uniform2f(gpu.den.texel, 1 / f.w, 1 / f.h);
     gl.uniform1f(gpu.den.k, 65025 / (2 * sigma * sigma));
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    tex = gpu.fboTex;
   }
   if (bloom) {
     // Blur a 1/4-size copy (horizontal then vertical); the upscale pass adds it back.
@@ -434,7 +531,7 @@ function adaptResolution(frameMs, n) {
   const before = state.scale;
   if (frameMs > target * 1.25) state.scale *= 0.92;
   else if (frameMs < target * 0.7) state.scale *= 1.04;
-  state.scale = Math.min(1, Math.max(0.18, state.scale));
+  state.scale = Math.min(1, Math.max(MIN_SCALE, state.scale));
   if (state.scale !== before) adaptWait = RES_COOLDOWN;
   $('res').value = Math.round(state.scale * 100);
 }

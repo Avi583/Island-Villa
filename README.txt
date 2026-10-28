@@ -31,6 +31,8 @@ WHAT THE C++ DOES
 - Sky model with a sun halo, procedural mountain horizon and stars at
   night; distance haze; ACES tone mapping.
 - Progressive accumulation: the image keeps refining while you stand still.
+- Temporal reprojection: while you move, earlier frames are reprojected and
+  blended in on the GPU, so glass and soft shadows stay clean.
 - Multi-threading: the browser starts one Web Worker per CPU core, each
   running its own copy of the module and rendering every Nth row so the
   work is evenly balanced.

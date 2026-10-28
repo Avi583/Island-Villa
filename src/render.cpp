@@ -61,6 +61,7 @@ static Frame g_f;
 
 static u32*   g_out;
 static float* g_accum;
+static float* g_depth;                 // per-pixel reprojection distance (see tracePath)
 static u32    g_cap;
 
 static void setupFrame(float time, float elev, float az, i32 shadows) {
@@ -338,11 +339,16 @@ static V3 shadeReflection(Ray r, Rng& g, bool shadows) {
 }
 
 // ── the main path ────────────────────────────────────────────────────────────
-static V3 tracePath(Ray r, Rng& g, float gi) {
+// reproT receives the distance along the camera ray to the first non-glass surface (1e5 for
+// sky). Thin glass doesn't bend rays, so the interior seen through a pane reprojects with its
+// own depth instead of sticking to the pane when the GPU temporal pass reuses old frames.
+static V3 tracePath(Ray r, Rng& g, float gi, float& reproT) {
   const bool shadows = g_f.shadows != 0;
   V3 L(0.f), T(1.f), sigma(0.f);
   float firstT = -1.f;
   V3 firstDir = r.d;
+  bool straight = true;                                         // still on the camera ray (only glass so far)
+  reproT = 0.f;
 
   for (int depth = 0; depth < 8; ++depth) {
     Hit h;
@@ -350,9 +356,17 @@ static V3 tracePath(Ray r, Rng& g, float gi) {
     float t = hit ? h.t : 1e5f;
     if (sigma.x > 0.f) T *= exp3(sigma * (-fminx(t, 60.f)));   // Beer–Lambert inside water
     if (depth == 0) firstT = t;
-    if (!hit) { L += T * skyColor(r.d, true); break; }
+    if (!hit) {
+      if (straight) reproT = 1e5f;
+      L += T * skyColor(r.d, true);
+      break;
+    }
 
     const Material& m = g_mats[h.mat];
+    if (straight) {
+      reproT += h.t;
+      if (m.kind == K_GLASS) reproT += 2.f * EPS; else straight = false;
+    }
     V3 p = r.o + r.d * h.t;
     bool front = dot(h.n, r.d) < 0.f;
     V3 nf = front ? h.n : -h.n;
@@ -438,19 +452,21 @@ static u32 toSRGB8(float x, float dither) {
 // ── exported API ─────────────────────────────────────────────────────────────
 RT_EXPORT(rt_init) void rt_init() { buildGammaLut(); buildScene(); }
 
-// Reserve storage for `pixels` output pixels (RGBA8 + float RGB accumulator).
+// Reserve storage for `pixels` output pixels (RGBA8 + float RGB accumulator + float depth).
 RT_EXPORT(rt_alloc) u32* rt_alloc(u32 pixels) {
   if (pixels > g_cap) {
-    unsigned char* mem = heapAlloc(pixels * 16u);
+    unsigned char* mem = heapAlloc(pixels * 20u);
     if (!mem) return nullptr;
     g_out = (u32*)mem;
     g_accum = (float*)(mem + pixels * 4u);
+    g_depth = (float*)(mem + pixels * 16u);
     g_cap = pixels;
   }
   for (u32 i = 0; i < pixels * 3u; ++i) g_accum[i] = 0.f;
   return g_out;
 }
 RT_EXPORT(rt_out) u32* rt_out() { return g_out; }
+RT_EXPORT(rt_depth) float* rt_depth() { return g_depth; }
 
 // Renders rows y = rowStart, rowStart+rowStep, … into a compact buffer (local row i at i*w).
 // blend: 1 = replace, <1 = exponential temporal accumulation (progressive refinement).
@@ -477,7 +493,7 @@ RT_EXPORT(rt_render) void rt_render(i32 w, i32 h, i32 rowStart, i32 rowStep, flo
       float u = ((x + g.next()) / w) * 2.f - 1.f;
       float v = 1.f - ((y + g.next()) / h) * 2.f;
       V3 dir = normalize(fwd + right * (u * th * aspect) + up * (v * th));
-      V3 c = tracePath(makeRay(cam, dir), g, gi);
+      V3 c = tracePath(makeRay(cam, dir), g, gi, g_depth[idx]);
       if (!(c.x == c.x) || !(c.y == c.y) || !(c.z == c.z)) c = V3(0.f);   // NaN guard
       float lc = luminance(c);
       if (lc > 60.f) c *= 60.f / lc;
