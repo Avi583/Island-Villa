@@ -261,3 +261,7 @@ build notes if the build command changes.
     PATH, else C:\Program Files\LLVM\bin\clang++.exe, so it builds on Windows from Git
     Bash without PATH changes. Checked with LLVM removed from PATH: it builds and the
     wasm is byte-identical to the previous build. build.ps1 deleted.
+6ad. [x] Min scale slider. New "Min scale (auto)" slider (30-100%, step 5) under Render
+    scale sets the auto-resolution floor (state.minScale, default 0.3 = old MIN_SCALE).
+    Raising it lifts the current scale immediately. JS/HTML only, no rebuild. Not yet run
+    in a browser.

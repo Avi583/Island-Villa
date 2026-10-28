@@ -14,7 +14,7 @@ export const state = {
   time: 0, paused: false,
   sunElev: 7 * DEG, sunAz: 2.3, exposure: 1.0,
   quality: 'balanced', bloom: true, denoise: true, upscale: true, shadows: true,
-  scale: 0.45, autoRes: true,
+  scale: 0.45, autoRes: true, minScale: 0.3,                       // minScale: auto-resolution floor
 };
 
 export const QUALITY = {

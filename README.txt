@@ -52,7 +52,7 @@ H                     Hide the interface
 Touch                 Left half of the screen moves, right half looks
 
 The settings panel has time-of-day presets (Golden, Noon, Dusk, Night), sun
-elevation and direction, exposure, quality level, render scale, and toggles
+elevation and direction, exposure, quality level, render scale (plus a minimum-scale floor for auto mode), and toggles
 for shadows, bloom and freezing time. Stand still for a second or two and
 the image sharpens as samples accumulate.
 

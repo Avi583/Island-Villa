@@ -60,7 +60,6 @@ let pending = 0, frameNo = 0, dispatchT = 0, workerMs = 0;
 let lastKey = '';
 const RES_STEP = 16;                                      // render width granularity (px)
 const RES_COOLDOWN = 8;                                   // frames between auto-resolution changes
-const MIN_SCALE = 0.3;                                    // auto-resolution floor; lower looks too blocky while moving
 const MIN_RENDER_W = 320;                                 // never render narrower than this (px)
 const MAX_SPP = 512;                                      // stop refining a frozen, still image after this many samples
 let adaptWait = 0;
@@ -193,7 +192,7 @@ function adaptResolution(frameMs, n) {
   const before = state.scale;
   if (frameMs > target * 1.25) state.scale *= 0.92;
   else if (frameMs < target * 0.7) state.scale *= 1.04;
-  state.scale = Math.min(1, Math.max(MIN_SCALE, state.scale));
+  state.scale = Math.min(1, Math.max(state.minScale, state.scale));
   if (state.scale !== before) adaptWait = RES_COOLDOWN;
   $('res').value = Math.round(state.scale * 100);
 }

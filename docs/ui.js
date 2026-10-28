@@ -22,6 +22,11 @@ export function wireUI() {
   $('exposure').oninput = (e) => { state.exposure = +e.target.value; };
   $('res').oninput = (e) => { state.scale = +e.target.value / 100; state.autoRes = false; $('autores').checked = false; };
   $('autores').onchange = (e) => { state.autoRes = e.target.checked; };
+  $('minres').oninput = (e) => {
+    state.minScale = +e.target.value / 100;
+    if (state.scale < state.minScale) { state.scale = state.minScale; $('res').value = Math.round(state.scale * 100); }
+    showValues();
+  };
   $('quality').onchange = (e) => setQuality(e.target.value);
   $('shadows').onchange = (e) => { state.shadows = e.target.checked; };
   $('bloom').onchange = (e) => { state.bloom = e.target.checked; };
@@ -55,6 +60,7 @@ function showValues() {
   $('sun-val').textContent = `${(state.sunElev / DEG).toFixed(1)}°`;
   $('az-val').textContent = `${Math.round(((state.sunAz / DEG) % 360 + 360) % 360)}°`;
   $('exp-val').textContent = state.exposure.toFixed(2);
+  $('minres-val').textContent = `${Math.round(state.minScale * 100)}%`;
 }
 
 let statT = 0;
