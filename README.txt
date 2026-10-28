@@ -60,13 +60,29 @@ the image sharpens as samples accumulate.
 FILES
 ---------------------------------------------------------------------
 src/mathx.h        Freestanding math, vectors, random numbers, sampling
-src/geometry.h     Rays, primitives, intersection, SAH BVH (SIMD 4-wide)
+src/primitives.h   Rays, primitives, intersection
+src/bvh.h          SAH BVH (SIMD 4-wide)
+src/geometry.h     Includes primitives.h and bvh.h
 src/scene.h        Material, light and scene declarations
-src/scene.cpp      The house, island, dock, trees, lamps and parked car
-src/render.cpp     Sky, textures, water, lighting, tracer, tone mapping,
-                   and the functions the browser calls
+src/scene.cpp      The house, island, dock, lamps; scene queries
+src/scene_builder.h  Scene BVH and the B/S/C/L builder helpers
+src/scene_props.cpp  Palm trees
+src/car.cpp        The parked car and its ray test
+src/runtime.h      memset/memcpy/memmove and the heap allocator
+src/frame.h        Per-frame state (sun, sky colours, time)
+src/sky.h, texture.h, water.h, lighting.h, tonemap.h
+                   Sky, textures, water, lighting, tone mapping
+src/render.cpp     Tracer, frame setup, and the functions the browser calls
 docs/index.html    The page and interface
-docs/main.js       Input, camera, collision, worker pool, display
+docs/main.js       Entry point: the frame loop and startup
+docs/state.js      Shared state, quality modes, presets
+docs/pipeline.js   Worker pool, frame dispatch, auto-resolution, present
+docs/gpu.js        WebGL display passes (TAA, denoise, bloom, upscale)
+docs/denoise.js    CPU denoise fallback without WebGL
+docs/input.js      Keyboard, mouse, touch, movement, tour/drone
+docs/ui.js         Settings panel, stats, screenshot, loading screen
+docs/shaders.js    GLSL shaders for the WebGL present path
+docs/collision.js  Walkable-area data and collide()
 docs/worker.js     Loads the WebAssembly module and renders its rows
 docs/raytracer.wasm  The compiled C++ (already built, ready to serve)
 docs/.nojekyll     Tells GitHub Pages to serve the files as-is
@@ -82,6 +98,9 @@ On macOS:          brew install llvm   (Apple's clang lacks wasm-ld)
 
 Then run:
     ./build.sh
+
+On Windows, install LLVM and run build.sh from Git Bash; it finds clang++
+in C:\Program Files\LLVM\bin if it is not on PATH.
 
 This writes a new docs/raytracer.wasm. Commit it along with your changes.
 

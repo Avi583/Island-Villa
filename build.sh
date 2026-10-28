@@ -4,7 +4,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-CXX="${CXX:-clang++}"
+# Use $CXX if set, else clang++ on PATH, else the default Windows LLVM install.
+if [ -z "${CXX:-}" ]; then
+  if command -v clang++ >/dev/null 2>&1; then CXX=clang++
+  elif [ -x "/c/Program Files/LLVM/bin/clang++.exe" ]; then CXX="/c/Program Files/LLVM/bin/clang++.exe"
+  else echo "clang++ not found. Install LLVM or set CXX." >&2; exit 1
+  fi
+fi
 mkdir -p docs
 
 "$CXX" --target=wasm32 -std=c++17 -O3 \
@@ -15,7 +21,7 @@ mkdir -p docs
   -Wl,--no-entry -Wl,--export-dynamic -Wl,--strip-all \
   -Wl,-z,stack-size=1048576 \
   -o docs/raytracer.wasm \
-  src/render.cpp src/scene.cpp
+  src/render.cpp src/scene.cpp src/car.cpp src/scene_props.cpp
 
 touch docs/.nojekyll
 echo "Built docs/raytracer.wasm ($(wc -c < docs/raytracer.wasm) bytes)"

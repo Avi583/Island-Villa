@@ -1,11 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// scene.cpp — builds the static world into a SAH BVH, places the parked car, and
-// answers closest-hit / any-hit queries for the tracer.
+// scene.cpp — builds the static world (house, grounds, lights) into a SAH BVH and
+// answers closest-hit / any-hit queries for the tracer. Cars live in car.cpp, trees in
+// scene_props.cpp, shared builder helpers in scene_builder.h.
 //
 // Coordinates: metres, +Y up. The island is a disc of radius 24 m whose top is
 // at y = 0.5; the lake surface is the plane y = 0 with a sand bed at y = -3.
 // ─────────────────────────────────────────────────────────────────────────────
-#include "scene.h"
+#include "scene_builder.h"
 
 namespace rt {
 
@@ -13,16 +14,6 @@ Material      g_mats[M_COUNT];
 unsigned char g_transmissive[M_COUNT];
 Light         g_lights[MAX_LIGHTS];
 i32           g_lightCount;
-
-static BVH<1024> g_bvh;
-
-// ── cars: one shared local-space template, instanced with a rotation ─────────
-struct Car { V3 pos, f, s; i32 paint; };
-static Car  g_cars[8];
-static i32  g_carCount;
-static Prim g_carParts[24];
-static i32  g_carPartCount;
-constexpr float CAR_BOUND_R = 2.7f;     // bounding sphere around (pos + 0.8 up)
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 static void defMat(i32 id, i32 kind, V3 albedo, float f0 = 0.04f, float rough = 0.f,
@@ -32,19 +23,6 @@ static void defMat(i32 id, i32 kind, V3 albedo, float f0 = 0.04f, float rough = 
   m.f0 = f0; m.rough = rough;
   g_transmissive[id] = (kind == K_GLASS || kind == K_WATER) ? 1 : 0;
 }
-static void B(float x0, float y0, float z0, float x1, float y1, float z1, i32 mat) {
-  g_bvh.add(mkBox(V3(x0, y0, z0), V3(x1, y1, z1), mat));
-}
-static void S(float x, float y, float z, float r, i32 mat) { g_bvh.add(mkSphere(V3(x, y, z), r, mat)); }
-static void C(float x, float y, float z, float r, float hh, i32 axis, i32 mat) {
-  g_bvh.add(mkCyl(V3(x, y, z), r, hh, axis, mat));
-}
-static void L(float x, float y, float z, V3 col, float range) {
-  if (g_lightCount >= MAX_LIGHTS) return;
-  Light& l = g_lights[g_lightCount++];
-  l.p = V3(x, y, z); l.col = col; l.range = range;
-}
-static void carPart(Prim p) { g_carParts[g_carPartCount++] = p; }
 
 // ── materials ────────────────────────────────────────────────────────────────
 static void buildMaterials() {
@@ -150,49 +128,6 @@ static void buildHouse() {
   B( PX,         0.8f, PZ0,  PX + 0.25f, 0.88f, PZ1, M_POOLTILE);
 }
 
-// ── palm trees: tall curved tapered trunk, ringed bulges, drooping fronds, coconut cluster ──
-static float treeRand(u32& s) {                                 // xorshift → [0,1)
-  s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-  return (float)(s & 0xFFFFFFu) * (1.f / 16777216.f);
-}
-static void buildTree(float x, float z, u32 seed) {
-  u32 s = seed * 2654435761u + 12345u;
-  for (int i = 0; i < 4; ++i) treeRand(s);
-  const float base = 0.5f;
-  float H    = 5.0f + 1.6f * treeRand(s);                       // trunk height
-  float r0   = 0.20f + 0.04f * treeRand(s);                     // base radius
-  float lean = 0.7f + 0.8f * treeRand(s), la = TAU * treeRand(s);
-  float lx = lean * fcos(la), lz = lean * fsin(la);             // total horizontal drift at the top
-
-  S(x, base + 0.05f, z, r0 * 1.6f, M_TRUNK);                    // swollen base
-  const int N = 16;                                             // trunk: overlapping spheres on a curve
-  float tx = x, ty = base, tz = z, tr = r0;
-  for (int i = 0; i <= N; ++i) {
-    float t = (float)i / N, bend = t * t;
-    tx = x + lx * bend; tz = z + lz * bend; ty = base + H * t;
-    tr = r0 * (1.f - 0.4f * t) * (i & 1 ? 1.12f : 1.f);         // alternating bulges read as trunk rings
-    S(tx, ty, tz, tr, M_TRUNK);
-  }
-
-  // crown: fronds radiate from the top, rising then drooping under their own weight
-  const int FRONDS = 9, SEG = 7;
-  for (int i = 0; i < FRONDS; ++i) {
-    float ang = TAU * (i + 0.4f * treeRand(s)) / FRONDS;
-    float len = 2.0f + 0.7f * treeRand(s), rise = 0.9f + 0.5f * treeRand(s), droop = 1.8f + 0.8f * treeRand(s);
-    float dx = fcos(ang), dz = fsin(ang);
-    for (int j = 1; j <= SEG; ++j) {
-      float u = (float)j / SEG;
-      S(tx + dx * len * u, ty + 0.15f + rise * u - droop * u * u, tz + dz * len * u,
-        0.30f * (1.f - 0.65f * u) + 0.05f, (i & 1) ? M_FOLIAGE2 : M_FOLIAGE);
-    }
-  }
-  S(tx, ty + 0.2f, tz, 0.35f, M_FOLIAGE);                       // crown heart
-  for (int i = 0; i < 4; ++i) {                                 // coconuts under the crown
-    float ang = TAU * (i + treeRand(s)) / 4.f;
-    S(tx + 0.28f * fcos(ang), ty - 0.2f, tz + 0.28f * fsin(ang), 0.17f, M_TRUNK);
-  }
-}
-
 // ── island landscaping, dock ─────────────────────────────────────────────────
 static void buildGrounds() {
   C(0.f, -1.5f, 0.f, ISLAND_R, 2.0f, 1, M_ISLAND);          // island disc: y -3.5 … 0.5
@@ -231,80 +166,18 @@ static void buildLights() {
   L(-5.f, 8.35f, 0.f, V3(2.5f, 1.8f, 1.0f), 5.f);           // dome orb
 }
 
-// ── car template (local frame: +x forward, +y up, wheels touch y = 0) ────────
-static void buildCarTemplate() {
-  g_carPartCount = 0;
-  carPart(mkBox(V3(-2.2f, 0.30f, -0.95f), V3(2.2f, 0.85f, 0.95f), M_CARPAINT));     // body
-  carPart(mkBox(V3(0.95f, 0.85f, -0.9f), V3(2.15f, 0.92f, 0.9f), M_CARPAINT));      // hood
-  carPart(mkBox(V3(-2.15f, 0.85f, -0.9f), V3(-1.5f, 0.97f, 0.9f), M_CARPAINT));     // trunk deck
-  // cabin: two glass steps give a raked windscreen and rear window instead of a box
-  carPart(mkBox(V3(-1.5f, 0.85f, -0.82f), V3(0.95f, 1.12f, 0.82f), M_CARGLASS));    // lower glass
-  carPart(mkBox(V3(-1.15f, 1.12f, -0.76f), V3(0.55f, 1.36f, 0.76f), M_CARGLASS));   // upper glass
-  carPart(mkBox(V3(-0.95f, 1.36f, -0.7f), V3(0.3f, 1.41f, 0.7f), M_CARPAINT));      // roof
-  for (int i = 0; i < 4; ++i) {
-    float x = (i & 1) ? 1.4f : -1.4f, z = (i & 2) ? 0.85f : -0.85f;
-    carPart(mkCyl(V3(x, 0.38f, z), 0.38f, 0.16f, 2, M_RUBBER));                     // tyre
-    carPart(mkCyl(V3(x, 0.38f, z), 0.24f, 0.175f, 2, M_CHROME));                    // rim
-  }
-  carPart(mkBox(V3(2.18f, 0.62f, -0.85f), V3(2.24f, 0.74f, -0.45f), M_HEADLIGHT));
-  carPart(mkBox(V3(2.18f, 0.62f, 0.45f),  V3(2.24f, 0.74f, 0.85f),  M_HEADLIGHT));
-  carPart(mkBox(V3(-2.24f, 0.62f, -0.9f), V3(-2.18f, 0.72f, 0.9f),  M_TAILLIGHT));  // full-width light bar
-  carPart(mkBox(V3(-2.0f, 0.50f, 0.95f),  V3(2.0f, 0.53f, 0.97f),   M_NEON_CYAN));  // side neon
-  carPart(mkBox(V3(-2.0f, 0.50f, -0.97f), V3(2.0f, 0.53f, -0.95f),  M_NEON_CYAN));
-}
-
-// Parks a car at (x, z) on the island top, nose pointing along (fx, fz) (unit length).
-static void addCar(float x, float z, float fx, float fz, i32 paint) {
-  Car& c = g_cars[g_carCount++];
-  c.paint = paint;
-  c.pos = V3(x, ISLAND_TOP, z);
-  c.f = V3(fx, 0.f, fz);
-  c.s = V3(-fz, 0.f, fx);
-}
-
 void buildScene() {
   g_bvh.clear();
   g_lightCount = 0;
-  g_carCount = 0;
   buildMaterials();
   buildHouse();
   buildGrounds();
   buildLights();
-  buildCarTemplate();
-  addCar(14.8f, 0.f, 0.f, 1.f, M_PAINT0);   // parked on the lawn beside the villa, facing the pool end
+  buildCars();
   g_bvh.build();
 }
 
 // ── queries ──────────────────────────────────────────────────────────────────
-// Instanced car test: cheap world-space bounding sphere, then the template in the car's frame.
-static bool hitCars(const Ray& r, Hit& h, bool any) {
-  bool found = false;
-  for (i32 i = 0; i < g_carCount; ++i) {
-    const Car& c = g_cars[i];
-    V3 oc = r.o - (c.pos + V3(0.f, 0.8f, 0.f));
-    float b = dot(oc, r.d), cc = dot(oc, oc) - CAR_BOUND_R * CAR_BOUND_R;
-    if (cc > 0.f && b > 0.f) continue;
-    float disc = b * b - cc;
-    if (disc < 0.f || -b - fsqrt(disc) > h.t) continue;
-
-    V3 rel = r.o - c.pos;
-    Ray lr = makeRay(V3(dot(rel, c.f), rel.y, dot(rel, c.s)), V3(dot(r.d, c.f), r.d.y, dot(r.d, c.s)));
-    for (i32 k = 0; k < g_carPartCount; ++k) {
-      const Prim& p = g_carParts[k];
-      float t; V3 n;
-      if (hitPrim(p, lr, h.t, t, n)) {
-        h.t = t;
-        h.n = c.f * n.x + V3(0.f, n.y, 0.f) + c.s * n.z;
-        h.mat = p.mat == M_CARPAINT ? c.paint : p.mat;
-        h.obj = i;
-        found = true;
-        if (any) return true;
-      }
-    }
-  }
-  return found;
-}
-
 bool intersectScene(const Ray& r, float tmax, Hit& h) {
   h.t = tmax; h.obj = -1; h.mat = 0; h.n = V3(0.f, 1.f, 0.f);
   bool hit = g_bvh.traverse<false>(r, h, nullptr);

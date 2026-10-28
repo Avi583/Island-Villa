@@ -6,7 +6,7 @@ Last updated: Tuesday, October 27, 2026 (items numbered; completed items moved t
 STATUS KEY
   [ ] = open, not started
   [~] = partly done / needs verification
-  [x] = done (listed in section 5 only)
+  [x] = done (listed in section 6 only)
 
 
 1. NOT YET TESTED
@@ -53,7 +53,7 @@ STATUS KEY
 
 2. KNOWN ISSUES - NOT YET FIXED
 ---------------------------------------------------------------------
-(2a and 2b done - see 5y and 5z.)
+(2a and 2b done - see 6y and 6z.)
 
 2c. [ ] (SONNET) Chrome pillars sparkle slightly at night.
     Mirror reflections of tiny bright emitters. Minor; could clamp specular
@@ -79,7 +79,7 @@ STATUS KEY
 none measured yet. Re-check fps on real hardware after each change.)
 
 Frame pipeline (main.js / worker.js)
-(3a and 3b done - see 5u and 5v.)
+(3a and 3b done - see 6u and 6v.)
 
 Ray tracer (C++)
 3g. [ ] (SONNET) Island cylinder is inside the BVH.
@@ -101,12 +101,12 @@ Ray tracer (C++)
     transmission stochastically by F (weighted), or skip the reflection
     when F * throughput is tiny.
 
-(3l done - see 5w.)
+(3l done - see 6w.)
 
-(3m and 3n done - see 5x.)
+(3m and 3n done - see 6x.)
 
 3o. [ ] (OPUS) Ray packets for primary rays.
-    BVH4 (5x) uses SIMD across 4 child boxes for one ray. Tracing 2x2
+    BVH4 (6x) uses SIMD across 4 child boxes for one ray. Tracing 2x2
     camera rays as a packet could add more speed for the first bounce,
     but shading is recursive per ray, so it means restructuring rt_render.
 
@@ -116,74 +116,116 @@ Ray tracer (C++)
 4a. [ ] GitHub Actions workflow to rebuild raytracer.wasm automatically on
     every push. Not included: the .wasm is prebuilt, so rebuild manually
     with ./build.sh after changing the C++.
+    (See section 5 for the refactor / file-split plan.)
 4b. [ ] Step-by-step GitHub Pages setup guide. Not included; README.txt has a
     short note on which folder to serve.
-4c. [ ] Put clang / wasm32 on the PATH permanently.
-    LLVM is installed at C:\Program Files\LLVM\bin (clang++ and wasm-ld are
-    there) but is not on PATH, so ./build.sh fails with "clang++: command
-    not found". Add that folder to the user PATH, or have build.sh default
-    CXX to that path. Until then build with:
-      PATH="$PATH:/c/Program Files/LLVM/bin" ./build.sh
 
 
-5. DONE AND VERIFIED (for reference)
+5. REFACTORS / FILE SPLITS - NOT YET DONE
 ---------------------------------------------------------------------
-5a. [x] C++ ray tracer compiles to a 52 KB freestanding WebAssembly module
+(Suggested Oct 27, 2026. Do in chunks of 8 tool calls or fewer. ES modules
+need an HTTP server locally (same as the .wasm fetch already does); no
+meaningful runtime performance cost. After each C++ split, rebuild the wasm
+and compare a render against the previous build.)
+
+Chunk 1 - low risk
+5a. [x] (SONNET) Move the GLSL shader strings (GPU_VS, GPU_VS_FLIP,
+    GPU_DENOISE_FS, GPU_UPSCALE_FS, GPU_TAA_FS, GPU_BLUR_FS, ~90 lines) out
+    of main.js into shaders.js (or .glsl files).
+5b. [x] (SONNET) Extract collision data and logic (CIRCLES, HOUSE, POOL,
+    collide) from main.js into collision.js. Pure data plus one function.
+
+Chunk 2 - main.js into ES modules (<script type="module">)
+5c. [x] (OPUS) Split the rest of main.js (725 lines): gpu.js (initGPU,
+    drawGPU, temporal, camBasis), denoise.js (CPU fallback), input.js (keys,
+    touch, look, tour/drone toggles), workers.js/pipeline.js (boot, dispatch,
+    receiveRows, frameDone, adaptResolution, buffers), ui.js (wireUI,
+    presets, screenshot, stats, loading), main.js (state, QUALITY, PRESETS,
+    loop/start). Needs care: many module-level `let` globals (busy, accumN,
+    rw, rh, ...) are shared across concerns and must move into state objects
+    without changing behaviour. worker.js can stay a classic worker.
+
+Chunk 3 - render.cpp (478 lines) into headers
+5d. [x] (SONNET) Split into runtime.h (memset/memcpy/memmove, heapAlloc),
+    sky.h (skyColor, hazeColor, ambientCheap), texture.h (noise, texAlbedo),
+    water.h (WAVES, waveNormal, waterNormal), lighting.h (directLight,
+    emission, indirectGI), tonemap.h (aces, gamma LUT, toSRGB8). render.cpp
+    keeps tracePath, shadeReflection, Frame setup and exports. Use
+    static/inline so the two-unit build in build.sh still links. Rebuild and
+    verify output matches.
+
+Chunk 4 - scene and geometry
+5e. [x] (SONNET) Move car (g_cars, g_carParts, buildCarTemplate, addCar,
+    hitCars) and buildTree out of scene.cpp into car.cpp / scene_props.cpp;
+    move the B/S/C/L helpers into scene_builder.h. Add new .cpp files to
+    build.sh.
+5f. [x] (SONNET) Move g_hole (HoleRect) from geometry.h into scene.h.
+    Optional: split geometry.h into primitives.h and bvh.h.
+5g. [x] (SONNET) Windows build: build.sh now finds LLVM itself, no separate
+    build.ps1 (see 6ac).
+
+After every split: update DIRECTORY.md (files added/moved) and README.txt
+build notes if the build command changes.
+
+
+6. DONE AND VERIFIED (for reference)
+---------------------------------------------------------------------
+6a. [x] C++ ray tracer compiles to a 52 KB freestanding WebAssembly module
     (clang + wasm-ld, no Emscripten, no libc).
-5b. [x] Renders correctly through the multi-instance, interleaved-row path
+6b. [x] Renders correctly through the multi-instance, interleaved-row path
     used by the browser workers (checked from 6 camera views).
-5c. [x] Sky gradient fixed (no lilac cast); stars only after sunset.
-5d. [x] Night/dusk speckle (fireflies) removed.
-5e. [x] Upper-floor ribbon window shows mullions and individually lit rooms.
-5f. [x] Page loads in headless Chromium with no script errors; walking
+6c. [x] Sky gradient fixed (no lilac cast); stars only after sunset.
+6d. [x] Night/dusk speckle (fireflies) removed.
+6e. [x] Upper-floor ribbon window shows mullions and individually lit rooms.
+6f. [x] Page loads in headless Chromium with no script errors; walking
     (W/A) and the perimeter tour (T) run without errors.
-5g. [x] Checkbox row layout in the settings panel fixed.
-5h. [x] Slider values (sun elevation, sun direction, exposure) now shown live.
-5i. [x] README.txt written.
-5j. [x] Repository packaged as island-villa.zip.
-5k. [x] Workers sit idle between frames (fixed Oct 26, 2026).
-5l. [x] Bilateral denoise moved from JS main thread to WebGL pass (JS kept
+6g. [x] Checkbox row layout in the settings panel fixed.
+6h. [x] Slider values (sun elevation, sun direction, exposure) now shown live.
+6i. [x] README.txt written.
+6j. [x] Repository packaged as island-villa.zip.
+6k. [x] Workers sit idle between frames (fixed Oct 26, 2026).
+6l. [x] Bilateral denoise moved from JS main thread to WebGL pass (JS kept
     as fallback).
-5m. [x] GI costs full price at low weight (fixed; JS only, no rebuild).
-5n. [x] Pool rim added: tile coping lip around the water, and bare cap strips
+6m. [x] GI costs full price at low weight (fixed; JS only, no rebuild).
+6n. [x] Pool rim added: tile coping lip around the water, and bare cap strips
     at the pool ends filled (wasm rebuilt; not yet viewed in a browser).
-5o. [x] Haze/fog only computed when fog > 0 (wasm rebuilt; fps not measured).
-5p. [x] Sky halo uses multiplies instead of pow (wasm rebuilt; fps not
+6o. [x] Haze/fog only computed when fog > 0 (wasm rebuilt; fps not measured).
+6p. [x] Sky halo uses multiplies instead of pow (wasm rebuilt; fps not
     measured).
-5q. [x] (3c) Auto-resolution: render width snapped to 16 px steps, plus an
+6q. [x] (3c) Auto-resolution: render width snapped to 16 px steps, plus an
     8-frame cooldown between scale changes. Not yet run in a browser.
-5r. [x] (3d) Rendering idles once a frozen (Photo/paused), still image reaches
+6r. [x] (3d) Rendering idles once a frozen (Photo/paused), still image reaches
     512 samples; wakes on any camera/sun/exposure/quality change. Not yet run
     in a browser.
-5s. [x] (3e) Worker count is now hardwareConcurrency - 1 (min 2). fps impact
+6s. [x] (3e) Worker count is now hardwareConcurrency - 1 (min 2). fps impact
     not measured; compare on real hardware (see 1a).
-5t. [x] (3f) Panel backdrop-filter removed; background made more opaque
+6t. [x] (3f) Panel backdrop-filter removed; background made more opaque
     (0.62 -> 0.8 alpha). Not yet viewed in a browser.
-5u. [x] (3a) The visible #view canvas is now the WebGL canvas (no drawImage
+6u. [x] (3a) The visible #view canvas is now the WebGL canvas (no drawImage
     copy; preserveDrawingBuffer keeps Screenshot working). A 2D context is
     only created when WebGL is unavailable. Not yet run in a browser.
-5v. [x] (3b) Bloom runs in the WebGL pass: 9-tap separable blur on a 1/4-size
+6v. [x] (3b) Bloom runs in the WebGL pass: 9-tap separable blur on a 1/4-size
     copy, added in the upscale shader. The CSS-filter bloom remains only in
     the no-WebGL fallback. Still uniform, not thresholded (see 2d). Not yet
     run in a browser; check the glow strength against the old look.
-5w. [x] (3l) Gamma now uses a 4096-entry lookup table (linearly interpolated)
+6w. [x] (3l) Gamma now uses a 4096-entry lookup table (linearly interpolated)
     built in rt_init() instead of 3 pow calls per pixel. wasm rebuilt cleanly;
     not yet viewed in a browser and fps not measured.
-5x. [x] (3m, 3n) The binary SAH BVH is collapsed into a 4-wide BVH (BVH4)
+6x. [x] (3m, 3n) The binary SAH BVH is collapsed into a 4-wide BVH (BVH4)
     whose child boxes are tested with one WASM SIMD slab test, and prims[]
     is reordered into leaf order (no idx[] lookup). Node.js benchmark,
     640x360, 3 views: ~560-680 ms -> ~400 ms (~30-40% faster). Pixels
     match the old build except 15 isolated ones out of 691,200, all on
     reflective or glass surfaces; most likely equal-distance ties now
     resolved in a different order. Not yet viewed in a browser.
-5y. [x] (2a) Soft/blocky image while moving on slow CPUs. Auto-resolution
+6y. [x] (2a) Soft/blocky image while moving on slow CPUs. Auto-resolution
     floor raised from 18% to 30% scale (MIN_SCALE), render width never below
     320 px (was 160) and height never below 180 px (was 90); the Render scale
     slider now starts at 30. GI was already off while moving (Balanced
     giMove = 0). Slow CPUs will now run slower than the 36 ms target instead
     of dropping resolution further. JS only, no rebuild. Not yet run in a
     browser; check fps and sharpness on a slow machine (see 1a).
-5z. [x] (2b) Grainy glass/interior while moving. New GPU temporal
+6z. [x] (2b) Grainy glass/interior while moving. New GPU temporal
     reprojection pass (TAA) before the denoise: the C++ tracer writes a
     per-pixel depth to the first non-glass surface (so the interior behind
     the glass reprojects correctly), each pixel is projected into the last
@@ -196,3 +238,26 @@ Ray tracer (C++)
     short trails on edges in motion. Not yet checked on real hardware; tune
     TAA_ALPHA in main.js if ghosting shows (higher = less ghosting, more
     noise).
+
+6aa. [x] (5a, 5b, 5d, 5e, 5f, 5g) Refactors done Oct 27, 2026. main.js now imports shaders.js
+    and collision.js (index.html loads it as a module; collide() takes a drone flag).
+    render.cpp split into runtime/frame/sky/texture/water/lighting/tonemap headers (frame.h
+    added for the shared Frame state); scene.cpp split into car.cpp, scene_props.cpp and
+    scene_builder.h; geometry.h split into primitives.h and bvh.h; build.ps1 added (later
+    removed, see 6ac).
+    g_hole stays in primitives.h (not scene.h): hitPrim uses it, and scene.h includes
+    geometry.h, so moving it would be circular. wasm rebuilt: the render.cpp split gave a
+    byte-identical wasm; after the scene split, renders from 3 views match the old build
+    pixel for pixel. The JS split passed a syntax check only; not yet run in a browser
+    (module loading needs HTTP serving). 5c done separately, see 6ab.
+6ab. [x] (5c) main.js split into ES modules: state.js (state, QUALITY, PRESETS, threads,
+    and `pipe` for the shared rw/rh/latest/busy/accumN/fps/doneMs), pipeline.js, gpu.js,
+    denoise.js, input.js, ui.js; main.js is just the loop and startup. present() and the
+    2D fallback went to pipeline.js. input.js and ui.js import each other (function calls
+    only, so the cycle is safe). Headless Chrome (SwiftShader) run on Oct 27, 2026: loads
+    with no script errors; walking, tour, drone, photo mode and the night preset all work
+    and stats update. Not yet checked on real hardware.
+6ac. [x] (was 4c, 4d) One build script. build.sh uses $CXX if set, else clang++ on
+    PATH, else C:\Program Files\LLVM\bin\clang++.exe, so it builds on Windows from Git
+    Bash without PATH changes. Checked with LLVM removed from PATH: it builds and the
+    wasm is byte-identical to the previous build. build.ps1 deleted.
