@@ -36,7 +36,9 @@ static V3 texAlbedo(const Material& m, V3 p, V3 n) {
         float h = hash2((i32)ffloor(p.x / 1.5f), (i32)ffloor(p.z / 1.5f));
         return V3(0.62f, 0.60f, 0.56f) * (0.88f + 0.12f * h);
       }
-      if (r > 13.6f) {                                              // lawn
+      bool poolPad = fabsx(p.x) < 9.6f && p.z > 5.f && p.z < 13.4f;  // terrace extends around the pool
+      bool carPad  = p.x > 13.f && p.x < 16.8f && fabsx(p.z) < 3.2f;  // and under the parked car
+      if (r > 13.6f && !poolPad && !carPad) {                       // lawn
         float g = fbm(p.x * 0.6f, p.z * 0.6f);
         V3 c = mix(V3(0.05f, 0.15f, 0.03f), V3(0.16f, 0.17f, 0.06f), g * g);
         return c * (0.7f + 0.6f * vnoise(p.x * 9.f, p.z * 9.f));
