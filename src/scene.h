@@ -1,7 +1,7 @@
 #pragma once
 // ─────────────────────────────────────────────────────────────────────────────
 // scene.h — materials, lights and the world: a cantilevered glass house on a
-// round island, an outdoor pool, a lake, and cars circling a ring road.
+// round island, an outdoor pool, a lake, and a parked car on the lawn.
 // ─────────────────────────────────────────────────────────────────────────────
 #include "geometry.h"
 
@@ -42,8 +42,6 @@ constexpr float ISLAND_TOP  = 0.5f;
 constexpr float LAKE_Y      = 0.f;
 constexpr float POOL_DEPTH  = 2.5f;     // water depth below the deck (top y = 0.8)
 constexpr float LAKE_BOTTOM = -3.f;
-constexpr float ROAD_IN     = 17.5f;
-constexpr float ROAD_OUT    = 21.5f;
 
 extern Material      g_mats[M_COUNT];
 extern unsigned char g_transmissive[M_COUNT];
@@ -51,7 +49,6 @@ extern Light         g_lights[MAX_LIGHTS];
 extern i32           g_lightCount;
 
 void buildScene();
-void updateDynamic(float time);
 bool intersectScene(const Ray& r, float tmax, Hit& h);
 bool occluded(const Ray& r, float tmax);
 

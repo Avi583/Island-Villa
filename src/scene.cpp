@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// scene.cpp — builds the static world into a SAH BVH, animates the cars, and
+// scene.cpp — builds the static world into a SAH BVH, places the parked car, and
 // answers closest-hit / any-hit queries for the tracer.
 //
 // Coordinates: metres, +Y up. The island is a disc of radius 24 m whose top is
@@ -15,10 +15,9 @@ Light         g_lights[MAX_LIGHTS];
 i32           g_lightCount;
 
 static BVH<1024> g_bvh;
-static i32      g_staticLights;
 
 // ── cars: one shared local-space template, instanced with a rotation ─────────
-struct Car { V3 pos, f, s; float R, speed, phase, dir; i32 paint; };
+struct Car { V3 pos, f, s; i32 paint; };
 static Car  g_cars[8];
 static i32  g_carCount;
 static Prim g_carParts[24];
@@ -199,7 +198,7 @@ static void buildGrounds() {
   C(0.f, -1.5f, 0.f, ISLAND_R, 2.0f, 1, M_ISLAND);          // island disc: y -3.5 … 0.5
   g_bvh.prims[g_bvh.primCount - 1].pad = 1;                 // its top cap is open over the pool
 
-  for (int k = 0; k < 6; ++k) {                             // trees between path and road
+  for (int k = 0; k < 6; ++k) {                             // trees on the lawn
     float a = (30.f + 60.f * k) * (PI / 180.f);
     buildTree(15.5f * fcos(a), 15.5f * fsin(a), 1000u + 77u * (u32)k);
   }
@@ -254,10 +253,13 @@ static void buildCarTemplate() {
   carPart(mkBox(V3(-2.0f, 0.50f, -0.97f), V3(2.0f, 0.53f, -0.95f),  M_NEON_CYAN));
 }
 
-static void addCar(float R, float speed, float phase, float dir, i32 paint) {
+// Parks a car at (x, z) on the island top, nose pointing along (fx, fz) (unit length).
+static void addCar(float x, float z, float fx, float fz, i32 paint) {
   Car& c = g_cars[g_carCount++];
-  c.R = R; c.speed = speed; c.phase = phase; c.dir = dir; c.paint = paint;
-  c.pos = V3(0.f); c.f = V3(1.f, 0.f, 0.f); c.s = V3(0.f, 0.f, 1.f);
+  c.paint = paint;
+  c.pos = V3(x, ISLAND_TOP, z);
+  c.f = V3(fx, 0.f, fz);
+  c.s = V3(-fz, 0.f, fx);
 }
 
 void buildScene() {
@@ -268,28 +270,9 @@ void buildScene() {
   buildHouse();
   buildGrounds();
   buildLights();
-  g_staticLights = g_lightCount;
   buildCarTemplate();
-  addCar(18.6f, 4.5f, 0.f,       1.f, M_PAINT0);   // inner lane, anticlockwise
+  addCar(14.8f, 0.f, 0.f, 1.f, M_PAINT0);   // parked on the lawn beside the villa, facing the pool end
   g_bvh.build();
-  updateDynamic(0.f);
-}
-
-void updateDynamic(float time) {
-  g_lightCount = g_staticLights;
-  for (i32 i = 0; i < g_carCount; ++i) {
-    Car& c = g_cars[i];
-    float phi = c.phase + c.dir * (c.speed / c.R) * time;
-    float sp = fsin(phi), cp = fcos(phi);
-    c.pos = V3(c.R * cp, ISLAND_TOP, c.R * sp);
-    c.f = V3(-sp * c.dir, 0.f, cp * c.dir);          // tangent of travel
-    c.s = V3(-c.f.z, 0.f, c.f.x);
-    if (g_lightCount < MAX_LIGHTS) {                  // headlight pool on the road ahead
-      Light& l = g_lights[g_lightCount++];
-      l.p = c.pos + c.f * 4.f + V3(0.f, 0.9f, 0.f);
-      l.col = V3(2.4f, 2.2f, 1.8f); l.range = 8.f;
-    }
-  }
 }
 
 // ── queries ──────────────────────────────────────────────────────────────────

@@ -4,8 +4,8 @@ Real-time ray tracing in hand-written C++, compiled to WebAssembly
 
 Live site: https://avi583.github.io/Island-Villa/
 
-A futuristic glass house on a round island in a lake, with a car circling a
-ring road. You walk the perimeter and watch reflections, refraction and
+A futuristic glass house on a round island in a lake, with a car parked on
+the lawn. You walk the perimeter and watch reflections, refraction and
 soft shadows update live. Every pixel is computed by the C++ code in src/,
 running on all CPU cores in the browser. No WebGL, no game engine, no
 third-party libraries.
@@ -60,7 +60,7 @@ FILES
 src/mathx.h        Freestanding math, vectors, random numbers, sampling
 src/geometry.h     Rays, primitives, intersection, SAH BVH (SIMD 4-wide)
 src/scene.h        Material, light and scene declarations
-src/scene.cpp      The house, island, dock, trees, lamps and animated cars
+src/scene.cpp      The house, island, dock, trees, lamps and parked car
 src/render.cpp     Sky, textures, water, lighting, tracer, tone mapping,
                    and the functions the browser calls
 docs/index.html    The page and interface

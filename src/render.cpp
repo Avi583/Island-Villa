@@ -152,16 +152,10 @@ static V3 texAlbedo(const Material& m, V3 p, V3 n) {
         return c;
       }
       float r = fsqrt(p.x * p.x + p.z * p.z);
-      if (r > ROAD_OUT) {                                           // promenade pavers
+      if (r > 21.5f) {                                              // promenade pavers
         if (gridLine(p.x / 1.5f, 0.012f) + gridLine(p.z / 1.5f, 0.012f) > 0.f) return V3(0.3f, 0.29f, 0.27f);
         float h = hash2((i32)ffloor(p.x / 1.5f), (i32)ffloor(p.z / 1.5f));
         return V3(0.62f, 0.60f, 0.56f) * (0.88f + 0.12f * h);
-      }
-      if (r > ROAD_IN) {                                            // asphalt ring road
-        float ang = fatan2(p.z, p.x);
-        if (fabsx(r - 19.5f) < 0.07f && fract(ang * 19.5f / 3.f) < 0.5f) return V3(0.78f, 0.66f, 0.28f);
-        if (fabsx(r - 17.75f) < 0.06f || fabsx(r - 21.25f) < 0.06f) return V3(0.72f);
-        return V3(0.055f, 0.055f, 0.06f) * (0.75f + 0.5f * vnoise(p.x * 4.f, p.z * 4.f));
       }
       if (r > 13.6f) {                                              // lawn
         float g = fbm(p.x * 0.6f, p.z * 0.6f);
@@ -466,7 +460,6 @@ RT_EXPORT(rt_render) void rt_render(i32 w, i32 h, i32 rowStart, i32 rowStep, flo
                                     float exposure, float gi, i32 shadows) {
   if (!g_out) return;
   setupFrame(time, sunElev, sunAz, shadows);
-  updateDynamic(time);
 
   V3 cam(cx, cy, cz);
   V3 fwd = normalize(V3(fcos(pitch) * fcos(yaw), fsin(pitch), fcos(pitch) * fsin(yaw)));

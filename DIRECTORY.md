@@ -20,7 +20,7 @@ Every file in the project, with a short description. Keep this updated whenever 
 | [src/mathx.h](src/mathx.h) | Freestanding math (sin, cos, exp, etc.), vectors, 4-wide SIMD types, random numbers, sampling. |
 | [src/geometry.h](src/geometry.h) | Rays, analytic primitives (box, sphere, cylinder), binned-SAH BVH collapsed to a SIMD 4-wide BVH. |
 | [src/scene.h](src/scene.h) | Material, light and scene declarations. |
-| [src/scene.cpp](src/scene.cpp) | Builds the house, island, dock, trees, lamps and animated cars; hit queries. |
+| [src/scene.cpp](src/scene.cpp) | Builds the house, island, dock, trees, lamps and parked car; hit queries. |
 | [src/render.cpp](src/render.cpp) | Sky, textures, water, lighting, tracer, tone mapping, and the exported WebAssembly functions. |
 
 ## docs/ (site served by GitHub Pages)
