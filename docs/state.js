@@ -14,12 +14,12 @@ export const state = {
   time: 0, paused: false,
   sunElev: 7 * DEG, sunAz: 2.3, exposure: 1.0,
   quality: 'balanced', bloom: true, denoise: true, upscale: true, shadows: true,
-  scale: 0.45, autoRes: true, minScale: 0.3,                       // minScale: auto-resolution floor
+  scale: 0.6, autoRes: true, minScale: 0.4,                     // minScale: auto-resolution floor
 };
 
 export const QUALITY = {
-  performance: { target: 24, giStill: 0.0, giMove: 0.0, maxW: 960 },
-  balanced:    { target: 36, giStill: 0.7, giMove: 0.0, maxW: 1280 },   // GI ray costs the same at any weight, so none while moving
+  performance: { target: 24, giStill: 0.0, giMove: 0.0, maxW: 1280 },
+  balanced:    { target: 36, giStill: 0.7, giMove: 0.0, maxW: 1920 },   // GI ray costs the same at any weight, so none while moving
   photo:       { target: 1e9, giStill: 1.0, giMove: 1.0, maxW: 1920 },
 };
 

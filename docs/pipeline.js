@@ -149,13 +149,12 @@ function frameDone() {
 }
 
 export function present(f) {
-  // Strength fades as a frozen/still image converges; while time runs the temporal window stays short, so keep it full.
-  const strength = f.frozen ? 1 / Math.sqrt(Math.max(1, f.accumN)) : 1;
+  // Strength fades as a still image converges; while time runs the temporal window stays short, so stop at half strength to keep grain down.
+  const strength = 1 / Math.sqrt(Math.max(1, f.frozen ? f.accumN : Math.min(f.accumN, 4)));
   const sigma = state.denoise && strength > 0.15 ? DEN_BASE_SIGMA * strength : 0;
-  // Sharpen harder the more the frame is stretched; skip when nearly 1:1 or once the image has converged.
+  // Sharpen harder the more the frame is stretched; skip when nearly 1:1.
   const stretch = canvas.width / f.w;
-  const settled = f.frozen && f.accumN > 8;
-  const amount = state.upscale && stretch > 1.08 && !settled ? Math.min(1.2, 0.35 * (stretch - 1) + 0.25) : 0;
+  const amount = state.upscale && stretch > 1.08 ? Math.min(1.2, 0.35 * (stretch - 1) + 0.25) : 0;
   if (!drawGPU(f, sigma, amount, state.bloom)) {                       // no WebGL: denoise in JS, let the 2D canvas scale
     if (!ctx && !(ctx = canvas.getContext('2d', { alpha: false }))) return;
     ctx.globalCompositeOperation = 'source-over';

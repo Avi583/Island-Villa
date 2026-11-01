@@ -56,6 +56,18 @@ export const GPU_TAA_FS = `precision highp float;
   varying vec2 uv; uniform sampler2D cur, hist, depth; uniform vec2 texel; uniform float alpha;
   uniform vec3 camP, camF, camR, camU, prevP, prevF, prevR, prevU;   // R/U scaled to the image plane
   float vig(vec2 q) { return 1.0 - 0.22 * (q.x * q.x * 0.6 + q.y * q.y); }   // same as rt_render
+  // Catmull-Rom history lookup (9 bilinear taps): plain bilinear would soften the history a little more every frame.
+  vec3 histAt(vec2 p) {
+    vec2 sp = p / texel - 0.5, f = fract(sp), b = (floor(sp) + 0.5) * texel;
+    vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f)), w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f)), w3 = f * f * (-0.5 + 0.5 * f);
+    vec2 w12 = w1 + w2, t0 = b - texel, t12 = b + w2 / w12 * texel, t3 = b + 2.0 * texel;
+    vec3 sum = vec3(0.0);
+    sum += texture2D(hist, vec2(t0.x, t0.y)).rgb * w0.x * w0.y + texture2D(hist, vec2(t12.x, t0.y)).rgb * w12.x * w0.y + texture2D(hist, vec2(t3.x, t0.y)).rgb * w3.x * w0.y;
+    sum += texture2D(hist, vec2(t0.x, t12.y)).rgb * w0.x * w12.y + texture2D(hist, vec2(t12.x, t12.y)).rgb * w12.x * w12.y + texture2D(hist, vec2(t3.x, t12.y)).rgb * w3.x * w12.y;
+    sum += texture2D(hist, vec2(t0.x, t3.y)).rgb * w0.x * w3.y + texture2D(hist, vec2(t12.x, t3.y)).rgb * w12.x * w3.y + texture2D(hist, vec2(t3.x, t3.y)).rgb * w3.x * w3.y;
+    return sum;
+  }
   void main() {
     vec3 c = texture2D(cur, uv).rgb;
     vec2 q = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
@@ -64,7 +76,7 @@ export const GPU_TAA_FS = `precision highp float;
     vec2 pq = vec2(dot(d, prevR), dot(d, prevU)) / max(z, 1e-4);
     vec2 puv = vec2(pq.x * 0.5 + 0.5, 0.5 - pq.y * 0.5);
     if (alpha >= 1.0 || z <= 0.0 || puv != clamp(puv, 0.0, 1.0)) { gl_FragColor = vec4(c, 1.0); return; }
-    vec3 h = texture2D(hist, puv).rgb * pow(vig(q) / vig(pq), 1.0 / 2.2);   // vignette is baked into both frames
+    vec3 h = histAt(puv) * pow(vig(q) / vig(pq), 1.0 / 2.2);   // vignette is baked into both frames
     vec3 lo = c, hi = c;
     for (int dy = -1; dy <= 1; dy++)
       for (int dx = -1; dx <= 1; dx++) {

@@ -265,3 +265,13 @@ build notes if the build command changes.
     scale sets the auto-resolution floor (state.minScale, default 0.3 = old MIN_SCALE).
     Raising it lifts the current scale immediately. JS/HTML only, no rebuild. Not yet run
     in a browser.
+6ae. [x] Fuzzy edges. Primary rays use one Halton sub-pixel offset per frame instead of a
+    random offset per pixel (wasm rebuilt). Denoise fades to half strength in a still view
+    while time runs; sharpening no longer switches off once settled. TAA history uses a
+    Catmull-Rom lookup instead of bilinear. Defaults raised: scale 45% -> 60%, auto floor
+    30% -> 40%, maxW Performance 960 -> 1280, Balanced 1280 -> 1920. Before/after compared
+    in headless Chrome (SwiftShader) at 1574 px: straighter, firmer edges, no script errors.
+    Not yet checked on real hardware. Without OES_texture_float (no TAA) the shared offset
+    may show as slight image wobble while moving; not tested.
+6af. [ ] Faint grain remains on pavers and walls in a still view with time running. Denoise
+    strength floor is the Math.min(f.accumN, 4) in present(): lower = sharper, more grain.

@@ -195,6 +195,13 @@ RT_EXPORT(rt_alloc) u32* rt_alloc(u32 pixels) {
 RT_EXPORT(rt_out) u32* rt_out() { return g_out; }
 RT_EXPORT(rt_depth) float* rt_depth() { return g_depth; }
 
+// Radical inverse of i in the given base: a low-discrepancy sequence in [0, 1).
+static float halton(u32 i, u32 base) {
+  float f = 1.f, r = 0.f;
+  for (; i; i /= base) { f /= (float)base; r += f * (float)(i % base); }
+  return r;
+}
+
 // Renders rows y = rowStart, rowStart+rowStep, … into a compact buffer (local row i at i*w).
 // blend: 1 = replace, <1 = exponential temporal accumulation (progressive refinement).
 RT_EXPORT(rt_render) void rt_render(i32 w, i32 h, i32 rowStart, i32 rowStep, float time,
@@ -210,6 +217,9 @@ RT_EXPORT(rt_render) void rt_render(i32 w, i32 h, i32 rowStart, i32 rowStep, flo
   V3 up = cross(right, fwd);
   float th = fsin(fov * 0.5f) / fcos(fov * 0.5f);
   float aspect = (float)w / (float)h;
+  // One sub-pixel offset per frame, shared by every pixel: edges stay straight within a frame
+  // and accumulation still antialiases them. Per-pixel offsets left edges speckled.
+  float jx = halton((u32)frame, 2u), jy = halton((u32)frame, 3u);
 
   i32 local = 0;
   for (i32 y = rowStart; y < h; y += rowStep, ++local) {
@@ -217,8 +227,8 @@ RT_EXPORT(rt_render) void rt_render(i32 w, i32 h, i32 rowStart, i32 rowStep, flo
     for (i32 x = 0; x < w; ++x) {
       u32 idx = (u32)(local * w + x);
       Rng g; g.s = hash32((u32)x * 1973u + (u32)y * 9277u + (u32)frame * 26699u) | 1u;
-      float u = ((x + g.next()) / w) * 2.f - 1.f;
-      float v = 1.f - ((y + g.next()) / h) * 2.f;
+      float u = ((x + jx) / w) * 2.f - 1.f;
+      float v = 1.f - ((y + jy) / h) * 2.f;
       V3 dir = normalize(fwd + right * (u * th * aspect) + up * (v * th));
       V3 c = tracePath(makeRay(cam, dir), g, gi, g_depth[idx]);
       if (!(c.x == c.x) || !(c.y == c.y) || !(c.z == c.z)) c = V3(0.f);   // NaN guard
